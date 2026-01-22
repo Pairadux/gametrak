@@ -4,45 +4,31 @@ Copyright © 2026 Austin Gause
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/austincgause/gametrak/internal/config"
+	"github.com/austincgause/gametrak/internal/hyprland"
+	"github.com/austincgause/gametrak/internal/models"
+	"github.com/austincgause/gametrak/internal/notify"
+	"github.com/austincgause/gametrak/internal/session"
+	"github.com/austincgause/gametrak/internal/utility"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
+var (
+	cfg             models.Config
+	cfgFile         string
+	debugMode       bool
+	activeSessions  = make(map[string]*models.Session)
+	shutdownRequest bool
+)
 
-// Session tracks an active game session
-type Session struct {
-	Address   string
-	Class     string
-	Title     string
-	StartTime time.Time
-}
-
-// Hardcoded game patterns for MVP
-// Patterns ending with underscore are treated as prefixes
-var gamePatterns = []string{
-	"steam_app_",    // Steam games (prefix match)
-	"RimWorldLinux", // RimWorld
-	"deadlock.exe",  // Deadlock
-}
-
-// Active game sessions tracked by window address
-var activeSessions = make(map[string]*Session)
-
-// shutdownRequested tracks if we're in graceful shutdown
-var shutdownRequested bool
-
-// rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "gametrak",
 	Short: "Event-driven game session tracker for Hyprland",
@@ -51,13 +37,18 @@ Hyprland's IPC event socket to detect when games start and stop.
 
 It tracks session durations and outputs events to stdout.
 Running gametrak without subcommands starts the monitoring service.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Skip config loading for commands that don't need it
+		if cmd.Name() == "help" {
+			return nil
+		}
+		return config.Load(&cfg)
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		runMonitor()
 	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -65,24 +56,18 @@ func Execute() {
 	}
 }
 
-var debugMode bool
-
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/gametrak/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $XDG_CONFIG_HOME/gametrak/config.yaml)")
 	rootCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "print all Hyprland events for debugging")
 }
 
-// initConfig reads in config file and ENV variables if set.
 func initConfig() {
 	if cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
-		configDir, err := os.UserConfigDir()
-		cobra.CheckErr(err)
-
-		viper.AddConfigPath(filepath.Join(configDir, "gametrak"))
+		viper.AddConfigPath(config.DefaultConfigDir)
 		viper.AddConfigPath(".")
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("config")
@@ -90,186 +75,167 @@ func initConfig() {
 
 	viper.AutomaticEnv()
 
+	// Create default config if it doesn't exist
+	if err := config.EnsureConfigExists(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create default config: %v\n", err)
+	}
+
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		if debugMode {
+			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+		}
 	}
 }
 
-// runMonitor starts the Hyprland event monitoring loop
 func runMonitor() {
-	socketPath, err := getSocketPath()
+	// Generate games.conf on startup
+	if err := hyprland.GenerateGamesConf(cfg.Games, cfg.Settings.HyprlandConf); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to generate games.conf: %v\n", err)
+	} else {
+		fmt.Printf("[%s] Generated %s\n", utility.Timestamp(), cfg.Settings.HyprlandConf)
+	}
+
+	socketPath, err := hyprland.GetSocketPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("[%s] Connecting to Hyprland socket: %s\n", timestamp(), socketPath)
+	fmt.Printf("[%s] Connecting to Hyprland socket: %s\n", utility.Timestamp(), socketPath)
 
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := hyprland.Connect()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: Failed to connect to Hyprland socket: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
-	fmt.Printf("[%s] Connected. Listening for game events...\n", timestamp())
-	fmt.Printf("[%s] Watching for patterns: %v\n", timestamp(), gamePatterns)
+	fmt.Printf("[%s] Connected. Listening for game events...\n", utility.Timestamp())
+
+	// Print watched games
+	var gameNames []string
+	for _, g := range cfg.Games {
+		gameNames = append(gameNames, g.DisplayName())
+	}
+	fmt.Printf("[%s] Watching for: %v\n", utility.Timestamp(), gameNames)
+
+	// Set up channels for events
+	events := make(chan string)
+	errors := make(chan error)
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		shutdownRequested = true
-		fmt.Printf("\n[%s] Shutting down...\n", timestamp())
-		conn.Close()
-	}()
 
-	// Read events from socket
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		line := scanner.Text()
-		handleEvent(line)
-	}
+	go hyprland.Listen(conn, events, errors)
 
-	if err := scanner.Err(); err != nil && !shutdownRequested {
-		fmt.Fprintf(os.Stderr, "Error reading from socket: %v\n", err)
-		os.Exit(1)
+	for {
+		select {
+		case <-sigChan:
+			shutdownRequest = true
+			fmt.Printf("\n[%s] Shutting down...\n", utility.Timestamp())
+			conn.Close()
+			return
+
+		case err := <-errors:
+			if !shutdownRequest {
+				fmt.Fprintf(os.Stderr, "Error reading from socket: %v\n", err)
+				os.Exit(1)
+			}
+			return
+
+		case line, ok := <-events:
+			if !ok {
+				return
+			}
+			handleEvent(line)
+		}
 	}
 }
 
-// getSocketPath builds the Hyprland socket2 path from environment variables
-func getSocketPath() (string, error) {
-	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
-	if runtimeDir == "" {
-		return "", fmt.Errorf("XDG_RUNTIME_DIR not set")
-	}
-
-	instanceSig := os.Getenv("HYPRLAND_INSTANCE_SIGNATURE")
-	if instanceSig == "" {
-		return "", fmt.Errorf("HYPRLAND_INSTANCE_SIGNATURE not set (is Hyprland running?)")
-	}
-
-	return filepath.Join(runtimeDir, "hypr", instanceSig, ".socket2.sock"), nil
-}
-
-// handleEvent parses and routes Hyprland events
 func handleEvent(line string) {
 	if debugMode {
-		fmt.Printf("[%s] DEBUG: %s\n", timestamp(), line)
+		fmt.Printf("[%s] DEBUG: %s\n", utility.Timestamp(), line)
 	}
 
-	parts := strings.SplitN(line, ">>", 2)
-	if len(parts) != 2 {
+	eventType, data, ok := hyprland.ParseEvent(line)
+	if !ok {
 		return
 	}
 
-	event := parts[0]
-	data := parts[1]
-
-	switch event {
-	case "openwindow":
+	switch eventType {
+	case hyprland.EventOpenWindow:
 		handleOpenWindow(data)
-	case "closewindow":
+	case hyprland.EventCloseWindow:
 		handleCloseWindow(data)
 	}
 }
 
-// handleOpenWindow processes openwindow events
-// Format: ADDRESS,WORKSPACE,CLASS,TITLE
 func handleOpenWindow(data string) {
-	parts := strings.SplitN(data, ",", 4)
-	if len(parts) < 3 {
+	event, ok := hyprland.ParseOpenWindow(data)
+	if !ok {
 		return
 	}
 
-	address := parts[0]
-	// parts[1] is workspace, skip it
-	class := parts[2]
-	title := ""
-	if len(parts) >= 4 {
-		title = parts[3]
-	}
-
-	if !matchesGame(class) {
+	game, matched := utility.MatchGame(event.Class, cfg.Games)
+	if !matched {
 		return
 	}
 
-	session := &Session{
-		Address:   address,
-		Class:     class,
-		Title:     title,
+	sess := &models.Session{
+		Address:   event.Address,
+		Class:     event.Class,
+		Title:     event.Title,
+		GameName:  game.DisplayName(),
 		StartTime: time.Now(),
 	}
-	activeSessions[address] = session
+	activeSessions[event.Address] = sess
 
-	displayName := title
+	displayName := event.Title
 	if displayName == "" {
-		displayName = class
+		displayName = game.DisplayName()
 	}
 
 	fmt.Printf("[%s] Game started: %s (class: %s, address: %s)\n",
-		timestamp(), displayName, class, address)
+		utility.Timestamp(), displayName, event.Class, event.Address)
 }
 
-// handleCloseWindow processes closewindow events
-// Format: ADDRESS
 func handleCloseWindow(data string) {
-	address := strings.TrimSpace(data)
+	event, ok := hyprland.ParseCloseWindow(data)
+	if !ok {
+		return
+	}
 
-	session, exists := activeSessions[address]
+	sess, exists := activeSessions[event.Address]
 	if !exists {
 		return
 	}
 
-	duration := time.Since(session.StartTime)
-	delete(activeSessions, address)
+	endTime := time.Now()
+	duration := endTime.Sub(sess.StartTime)
+	delete(activeSessions, event.Address)
 
-	displayName := session.Title
+	displayName := sess.Title
 	if displayName == "" {
-		displayName = session.Class
+		displayName = sess.GameName
 	}
 
 	fmt.Printf("[%s] Game ended: %s - Session: %s\n",
-		timestamp(), displayName, formatDuration(duration))
-}
+		utility.Timestamp(), displayName, utility.FormatDurationExact(duration))
 
-// matchesGame checks if a window class matches any configured game pattern
-func matchesGame(class string) bool {
-	for _, pattern := range gamePatterns {
-		if strings.HasSuffix(pattern, "_") {
-			if strings.HasPrefix(class, pattern) {
-				return true
-			}
-		} else {
-			if class == pattern {
-				return true
+	// Log session if enabled
+	if cfg.Settings.LogSessions {
+		if err := session.Log(cfg.Settings.SessionsFile, *sess, endTime); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to log session: %v\n", err)
+		}
+	}
+
+	// Send notification if enabled
+	if cfg.Settings.Notifications {
+		if err := notify.GameEnded(displayName, duration); err != nil {
+			if debugMode {
+				fmt.Fprintf(os.Stderr, "Warning: failed to send notification: %v\n", err)
 			}
 		}
 	}
-	return false
-}
-
-// formatDuration formats a duration as "Xh Xm Xs"
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
-
-	if h > 0 {
-		return fmt.Sprintf("%dh %dm %ds", h, m, s)
-	}
-	if m > 0 {
-		return fmt.Sprintf("%dm %ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
-}
-
-// timestamp returns the current time formatted for logging
-func timestamp() string {
-	return time.Now().Format("15:04:05")
 }
