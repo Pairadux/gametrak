@@ -37,6 +37,9 @@ Hyprland's IPC event socket to detect when games start and stop.
 
 It tracks session durations and outputs events to stdout.
 Running gametrak without subcommands starts the monitoring service.`,
+	CompletionOptions: cobra.CompletionOptions{
+		HiddenDefaultCmd: true,
+	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for commands that don't need it
 		if cmd.Name() == "help" {
