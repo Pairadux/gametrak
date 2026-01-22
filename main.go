@@ -1,6 +1,5 @@
 /*
 Copyright © 2026 Austin Gause
-
 */
 package main
 
