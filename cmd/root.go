@@ -97,6 +97,7 @@ func runMonitor() {
 
 	socketPath, err := hyprland.GetSocketPath()
 	if err != nil {
+		notify.Error(err.Error())
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -105,12 +106,18 @@ func runMonitor() {
 
 	conn, err := hyprland.Connect()
 	if err != nil {
+		notify.Error(err.Error())
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
 	fmt.Printf("[%s] Connected. Listening for game events...\n", utility.Timestamp())
+
+	// Send startup notification
+	if cfg.Settings.Notifications {
+		notify.Started()
+	}
 
 	// Print watched games
 	var gameNames []string
@@ -139,6 +146,7 @@ func runMonitor() {
 
 		case err := <-errors:
 			if !shutdownRequest {
+				notify.Error(fmt.Sprintf("Socket error: %v", err))
 				fmt.Fprintf(os.Stderr, "Error reading from socket: %v\n", err)
 				os.Exit(1)
 			}
