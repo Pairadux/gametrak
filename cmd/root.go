@@ -88,13 +88,6 @@ func initConfig() {
 }
 
 func runMonitor() {
-	// Generate games.conf on startup
-	if err := hyprland.GenerateGamesConf(cfg.Games, cfg.Settings.HyprlandConf); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to generate games.conf: %v\n", err)
-	} else {
-		fmt.Printf("[%s] Generated %s\n", utility.Timestamp(), cfg.Settings.HyprlandConf)
-	}
-
 	socketPath, err := hyprland.GetSocketPath()
 	if err != nil {
 		notify.Error(err.Error())
