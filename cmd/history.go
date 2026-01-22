@@ -1,6 +1,4 @@
-/*
-Copyright © 2026 Austin Gause
-*/
+
 package cmd
 
 import (
