@@ -39,6 +39,9 @@ var gamePatterns = []string{
 // Active game sessions tracked by window address
 var activeSessions = make(map[string]*Session)
 
+// shutdownRequested tracks if we're in graceful shutdown
+var shutdownRequested bool
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "gametrak",
@@ -114,9 +117,9 @@ func runMonitor() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
+		shutdownRequested = true
 		fmt.Printf("\n[%s] Shutting down...\n", timestamp())
 		conn.Close()
-		os.Exit(0)
 	}()
 
 	// Read events from socket
@@ -126,7 +129,7 @@ func runMonitor() {
 		handleEvent(line)
 	}
 
-	if err := scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil && !shutdownRequested {
 		fmt.Fprintf(os.Stderr, "Error reading from socket: %v\n", err)
 		os.Exit(1)
 	}
