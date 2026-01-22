@@ -10,3 +10,6 @@ gametrak
 
 # OS
 .DS_Store
+
+# Local docs
+DESIGN.md
