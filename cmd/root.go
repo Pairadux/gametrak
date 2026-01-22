@@ -176,18 +176,19 @@ func handleEvent(line string) {
 }
 
 // handleOpenWindow processes openwindow events
-// Format: ADDRESS,CLASS,TITLE
+// Format: ADDRESS,WORKSPACE,CLASS,TITLE
 func handleOpenWindow(data string) {
-	parts := strings.SplitN(data, ",", 3)
-	if len(parts) < 2 {
+	parts := strings.SplitN(data, ",", 4)
+	if len(parts) < 3 {
 		return
 	}
 
 	address := parts[0]
-	class := parts[1]
+	// parts[1] is workspace, skip it
+	class := parts[2]
 	title := ""
-	if len(parts) >= 3 {
-		title = parts[2]
+	if len(parts) >= 4 {
+		title = parts[3]
 	}
 
 	if !matchesGame(class) {
