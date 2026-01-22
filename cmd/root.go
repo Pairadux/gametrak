@@ -65,10 +65,13 @@ func Execute() {
 	}
 }
 
+var debugMode bool
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/gametrak/config.yaml)")
+	rootCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "print all Hyprland events for debugging")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -152,6 +155,10 @@ func getSocketPath() (string, error) {
 
 // handleEvent parses and routes Hyprland events
 func handleEvent(line string) {
+	if debugMode {
+		fmt.Printf("[%s] DEBUG: %s\n", timestamp(), line)
+	}
+
 	parts := strings.SplitN(line, ">>", 2)
 	if len(parts) != 2 {
 		return
