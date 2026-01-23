@@ -4,9 +4,9 @@ import "time"
 
 // Game represents a game to track
 type Game struct {
-	Class  string `mapstructure:"class"`
-	Name   string `mapstructure:"name,omitempty"`
-	Prefix bool   `mapstructure:"prefix,omitempty"`
+	Class  string `mapstructure:"class" yaml:"class"`
+	Name   string `mapstructure:"name,omitempty" yaml:"name,omitempty"`
+	Prefix bool   `mapstructure:"prefix,omitempty" yaml:"prefix,omitempty"`
 }
 
 // DisplayName returns the game's display name, falling back to class if not set
@@ -37,10 +37,10 @@ type SessionLog struct {
 
 // Settings holds application settings
 type Settings struct {
-	Notifications bool   `mapstructure:"notifications"`
-	LogSessions   bool   `mapstructure:"log_sessions"`
-	SessionsFile  string `mapstructure:"sessions_file"`
-	HyprlandConf  string `mapstructure:"hyprland_conf"`
+	Notifications bool   `mapstructure:"notifications" yaml:"notifications"`
+	LogSessions   bool   `mapstructure:"log_sessions" yaml:"log_sessions"`
+	SessionsFile  string `mapstructure:"sessions_file" yaml:"sessions_file"`
+	HyprlandConf  string `mapstructure:"hyprland_conf" yaml:"hyprland_conf"`
 }
 
 // Config represents the full configuration structure
