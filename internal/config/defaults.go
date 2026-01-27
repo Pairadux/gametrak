@@ -18,7 +18,7 @@ var (
 // DefaultGames returns the default game patterns
 func DefaultGames() []models.Game {
 	return []models.Game{
-		{Class: "steam_app_", Name: "Steam Games", Prefix: true},
+		{Class: "steam_app_", Name: "Steam Games", Prefix: true, UseTitle: true},
 		{Class: "deadlock.exe", Name: "Deadlock"},
 		{Class: "hl2_linux", Name: "Half-Life 2"},
 		{Class: "RimWorldLinux", Name: "RimWorld"},
@@ -30,10 +30,11 @@ func DefaultGames() []models.Game {
 // DefaultSettings returns default application settings
 func DefaultSettings() models.Settings {
 	return models.Settings{
-		Notifications: true,
-		LogSessions:   true,
-		SessionsFile:  DefaultSessions,
-		HyprlandConf:  DefaultHyprConf,
+		Notifications:  true,
+		LogSessions:    true,
+		SessionsFile:   DefaultSessions,
+		HyprlandConf:   DefaultHyprConf,
+		MinSessionMins: 15,
 	}
 }
 

@@ -183,19 +183,22 @@ func handleOpenWindow(data string) {
 		return
 	}
 
+	// Determine the game name for logging/history
+	gameName := game.DisplayName()
+	if game.UseTitle && event.Title != "" {
+		gameName = event.Title
+	}
+
 	sess := &models.Session{
 		Address:   event.Address,
 		Class:     event.Class,
 		Title:     event.Title,
-		GameName:  game.DisplayName(),
+		GameName:  gameName,
 		StartTime: time.Now(),
 	}
 	activeSessions[event.Address] = sess
 
-	displayName := event.Title
-	if displayName == "" {
-		displayName = game.DisplayName()
-	}
+	displayName := gameName
 
 	fmt.Printf("[%s] Game started: %s (class: %s, address: %s)\n",
 		utility.Timestamp(), displayName, event.Class, event.Address)
@@ -224,11 +227,15 @@ func handleCloseWindow(data string) {
 	fmt.Printf("[%s] Game ended: %s - Session: %s\n",
 		utility.Timestamp(), displayName, utility.FormatDurationExact(duration))
 
-	// Log session if enabled
-	if cfg.Settings.LogSessions {
+	// Log session if enabled and meets minimum duration
+	minDuration := time.Duration(cfg.Settings.MinSessionMins) * time.Minute
+	if cfg.Settings.LogSessions && duration >= minDuration {
 		if err := session.Log(cfg.Settings.SessionsFile, *sess, endTime); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to log session: %v\n", err)
 		}
+	} else if cfg.Settings.LogSessions && duration < minDuration {
+		fmt.Printf("[%s] Session too short to log (min: %d mins)\n",
+			utility.Timestamp(), cfg.Settings.MinSessionMins)
 	}
 
 	// Send notification if enabled
