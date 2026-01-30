@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/austincgause/gametrak/internal/session"
@@ -11,14 +12,16 @@ import (
 )
 
 var statsCmd = &cobra.Command{
-	Use:   "stats",
+	Use:   "stats [today|week|month|<game>]",
 	Short: "Show aggregate game time statistics",
 	Long: `Display statistics about your game time including:
 - Total time played per game
 - Most played games
 - Session counts
 
-More detailed stats coming in future versions.`,
+Filter by time period (today, week, month) or by game name.`,
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"today", "week", "month"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sessions, err := session.LoadAll(cfg.Settings.SessionsFile)
 		if err != nil {
@@ -27,6 +30,26 @@ More detailed stats coming in future versions.`,
 
 		if len(sessions) == 0 {
 			fmt.Println("No sessions recorded yet.")
+			return nil
+		}
+
+		// Parse filter from argument
+		var timeFilter, gameFilter string
+		if len(args) > 0 {
+			arg := strings.ToLower(args[0])
+			switch arg {
+			case "today", "week", "month":
+				timeFilter = arg
+			default:
+				gameFilter = args[0]
+			}
+		}
+
+		// Apply filters
+		sessions = filterSessions(sessions, timeFilter, gameFilter)
+
+		if len(sessions) == 0 {
+			fmt.Println("No sessions match the filter criteria.")
 			return nil
 		}
 
@@ -66,8 +89,15 @@ More detailed stats coming in future versions.`,
 			totalSessions += s.sessionCount
 		}
 
-		fmt.Printf("Game Statistics\n")
-		fmt.Printf("===============\n\n")
+		// Build header
+		header := "Game Statistics"
+		if timeFilter != "" {
+			header += fmt.Sprintf(" (%s)", timeFilter)
+		} else if gameFilter != "" {
+			header += fmt.Sprintf(" (filtered: %s)", gameFilter)
+		}
+		fmt.Printf("%s\n", header)
+		fmt.Printf("%s\n\n", strings.Repeat("=", len(header)))
 
 		fmt.Printf("Total: %s across %d sessions\n\n",
 			utility.FormatDurationRounded(time.Duration(totalSeconds)*time.Second),
