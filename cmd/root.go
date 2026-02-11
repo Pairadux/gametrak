@@ -186,7 +186,7 @@ func handleOpenWindow(data string) {
 	// Determine the game name for logging/history
 	gameName := game.DisplayName()
 	if game.UseTitle && event.Title != "" {
-		gameName = event.Title
+		gameName = utility.SanitizeTitle(event.Title)
 	}
 
 	sess := &models.Session{

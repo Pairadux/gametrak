@@ -17,14 +17,16 @@ var (
 )
 
 var historyCmd = &cobra.Command{
-	Use:   "history [today|week|month|<game>]",
+	Use:   "history [today|yesterday|week|month|year|YYYY-MM-DD|<game>]",
 	Short: "Display recent game sessions",
 	Long: `Display a log of recent game sessions with rounded times.
 
 By default shows the last 10 sessions. Use --all to show all sessions
-or --limit to specify a different number.`,
+or --limit to specify a different number.
+
+Time filters: today, yesterday, week, month, year, or a specific date (YYYY-MM-DD).`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"today", "week", "month"},
+	ValidArgs: []string{"today", "yesterday", "week", "month", "year"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sessions, err := session.LoadAll(cfg.Settings.SessionsFile)
 		if err != nil {
@@ -36,16 +38,9 @@ or --limit to specify a different number.`,
 			return nil
 		}
 
-		// Parse filter from argument
-		var timeFilter, gameFilter string
-		if len(args) > 0 {
-			arg := strings.ToLower(args[0])
-			switch arg {
-			case "today", "week", "month":
-				timeFilter = arg
-			default:
-				gameFilter = args[0]
-			}
+		timeFilter, gameFilter, err := parseFilterArg(args)
+		if err != nil {
+			return err
 		}
 
 		// Apply filters
@@ -90,6 +85,33 @@ or --limit to specify a different number.`,
 	},
 }
 
+// parseFilterArg extracts time and game filters from command arguments.
+// It recognizes keywords (today, yesterday, week, month, year),
+// dates (YYYY-MM-DD), and treats anything else as a game name filter.
+func parseFilterArg(args []string) (timeFilter, gameFilter string, err error) {
+	if len(args) == 0 {
+		return "", "", nil
+	}
+
+	arg := strings.ToLower(args[0])
+	switch arg {
+	case "today", "yesterday", "week", "month", "year":
+		return arg, "", nil
+	default:
+		date, parseErr := time.Parse("2006-01-02", arg)
+		if parseErr != nil {
+			return "", args[0], nil
+		}
+
+		now := time.Now()
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		if date.After(today) {
+			return "", "", fmt.Errorf("cannot query future date: %s", arg)
+		}
+		return arg, "", nil
+	}
+}
+
 func filterSessions(sessions []models.SessionLog, timeFilter, gameFilter string) []models.SessionLog {
 	if timeFilter == "" && gameFilter == "" {
 		return sessions
@@ -104,25 +126,9 @@ func filterSessions(sessions []models.SessionLog, timeFilter, gameFilter string)
 			continue
 		}
 
-		// Time filter
-		switch timeFilter {
-		case "today":
-			y, m, d := now.Date()
-			startOfDay := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
-			if startTime.Before(startOfDay) {
-				continue
-			}
-		case "week":
-			startOfWeek := now.AddDate(0, 0, -int(now.Weekday()))
-			y, m, d := startOfWeek.Date()
-			startOfWeek = time.Date(y, m, d, 0, 0, 0, 0, now.Location())
-			if startTime.Before(startOfWeek) {
-				continue
-			}
-		case "month":
-			y, m, _ := now.Date()
-			startOfMonth := time.Date(y, m, 1, 0, 0, 0, 0, now.Location())
-			if startTime.Before(startOfMonth) {
+		// Time filter (uses session start time only)
+		if timeFilter != "" {
+			if !matchesTimeFilter(startTime, now, timeFilter) {
 				continue
 			}
 		}
@@ -138,6 +144,44 @@ func filterSessions(sessions []models.SessionLog, timeFilter, gameFilter string)
 	}
 
 	return filtered
+}
+
+func matchesTimeFilter(startTime, now time.Time, filter string) bool {
+	loc := now.Location()
+
+	switch filter {
+	case "today":
+		y, m, d := now.Date()
+		startOfDay := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		return !startTime.Before(startOfDay)
+	case "yesterday":
+		y, m, d := now.AddDate(0, 0, -1).Date()
+		startOfYesterday := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		y, m, d = now.Date()
+		startOfToday := time.Date(y, m, d, 0, 0, 0, 0, loc)
+		return !startTime.Before(startOfYesterday) && startTime.Before(startOfToday)
+	case "week":
+		startOfWeek := now.AddDate(0, 0, -int(now.Weekday()))
+		y, m, d := startOfWeek.Date()
+		startOfWeek = time.Date(y, m, d, 0, 0, 0, 0, loc)
+		return !startTime.Before(startOfWeek)
+	case "month":
+		y, m, _ := now.Date()
+		startOfMonth := time.Date(y, m, 1, 0, 0, 0, 0, loc)
+		return !startTime.Before(startOfMonth)
+	case "year":
+		startOfYear := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
+		return !startTime.Before(startOfYear)
+	default:
+		// Arbitrary date (YYYY-MM-DD)
+		date, err := time.Parse("2006-01-02", filter)
+		if err != nil {
+			return true
+		}
+		startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+		endOfDay := startOfDay.AddDate(0, 0, 1)
+		return !startTime.Before(startOfDay) && startTime.Before(endOfDay)
+	}
 }
 
 func init() {

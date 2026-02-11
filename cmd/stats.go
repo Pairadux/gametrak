@@ -12,16 +12,16 @@ import (
 )
 
 var statsCmd = &cobra.Command{
-	Use:   "stats [today|week|month|<game>]",
+	Use:   "stats [today|yesterday|week|month|year|YYYY-MM-DD|<game>]",
 	Short: "Show aggregate game time statistics",
 	Long: `Display statistics about your game time including:
 - Total time played per game
 - Most played games
 - Session counts
 
-Filter by time period (today, week, month) or by game name.`,
+Time filters: today, yesterday, week, month, year, or a specific date (YYYY-MM-DD).`,
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"today", "week", "month"},
+	ValidArgs: []string{"today", "yesterday", "week", "month", "year"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		sessions, err := session.LoadAll(cfg.Settings.SessionsFile)
 		if err != nil {
@@ -33,16 +33,9 @@ Filter by time period (today, week, month) or by game name.`,
 			return nil
 		}
 
-		// Parse filter from argument
-		var timeFilter, gameFilter string
-		if len(args) > 0 {
-			arg := strings.ToLower(args[0])
-			switch arg {
-			case "today", "week", "month":
-				timeFilter = arg
-			default:
-				gameFilter = args[0]
-			}
+		timeFilter, gameFilter, err := parseFilterArg(args)
+		if err != nil {
+			return err
 		}
 
 		// Apply filters
