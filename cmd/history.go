@@ -63,21 +63,56 @@ Time filters: today, yesterday, week, month, year, or a specific date (YYYY-MM-D
 
 		fmt.Printf("Recent game sessions:\n\n")
 
+		// Collect visible rows for alignment
+		type histRow struct {
+			date  string
+			game  string
+			hours int
+			mins  int
+		}
+		var rows []histRow
+		maxGameLen := 0
+		hasHours := false
+
 		for i := len(sessions) - 1; i >= start; i-- {
 			s := sessions[i]
-
 			startTime, err := time.Parse(time.RFC3339, s.Start)
 			if err != nil {
 				continue
 			}
+			r := utility.RoundDuration(time.Duration(s.DurationSeconds) * time.Second)
+			row := histRow{
+				date:  startTime.Format("2006-01-02 15:04"),
+				game:  s.Game,
+				hours: r.Hours,
+				mins:  r.Mins,
+			}
+			if len(s.Game) > maxGameLen {
+				maxGameLen = len(s.Game)
+			}
+			if r.Hours > 0 {
+				hasHours = true
+			}
+			rows = append(rows, row)
+		}
 
-			duration := time.Duration(s.DurationSeconds) * time.Second
-			roundedDuration := utility.FormatDurationRounded(duration)
+		for _, r := range rows {
+			hourWord := "hours"
+			if r.hours == 1 {
+				hourWord = "hour"
+			}
 
-			fmt.Printf("  %s  %-20s  %s\n",
-				startTime.Format("2006-01-02 15:04"),
-				s.Game,
-				roundedDuration)
+			var line string
+			if hasHours {
+				if r.hours > 0 {
+					line = fmt.Sprintf("  %s  %-*s  %2d %-5s  %2d mins", r.date, maxGameLen, r.game, r.hours, hourWord, r.mins)
+				} else {
+					line = fmt.Sprintf("  %s  %-*s            %2d mins", r.date, maxGameLen, r.game, r.mins)
+				}
+			} else {
+				line = fmt.Sprintf("  %s  %-*s  %2d mins", r.date, maxGameLen, r.game, r.mins)
+			}
+			fmt.Println(line)
 		}
 
 		fmt.Println()

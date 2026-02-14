@@ -60,6 +60,22 @@ func FormatDurationRounded(d time.Duration) string {
 	return fmt.Sprintf("%d %s %d mins", hours, hourWord, mins)
 }
 
+// RoundedDuration holds hours and minutes after rounding to 15-minute intervals.
+type RoundedDuration struct {
+	Hours, Mins int
+}
+
+// RoundDuration rounds a duration to 15-minute intervals and returns
+// the separate hour and minute components.
+func RoundDuration(d time.Duration) RoundedDuration {
+	totalMins := int(d.Minutes())
+	if totalMins < 15 {
+		return RoundedDuration{Hours: 0, Mins: totalMins}
+	}
+	rounded := ((totalMins + 7) / 15) * 15
+	return RoundedDuration{Hours: rounded / 60, Mins: rounded % 60}
+}
+
 // Timestamp returns the current time formatted for logging
 func Timestamp() string {
 	return time.Now().Format("15:04:05")
