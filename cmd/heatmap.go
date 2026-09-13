@@ -46,7 +46,8 @@ Defaults to the last year when no time filter is given.
 		}
 
 		now := time.Now()
-		start, end := heatmapRange(q, now)
+		summary := stats.Summarize(q.Matched, now)
+		start, end := heatmapRange(q, summary.First, now)
 		played := dailyTotals(q.Matched, now)
 
 		header := "Playtime Heatmap"
@@ -56,10 +57,8 @@ Defaults to the last year when no time filter is given.
 		fmt.Println(header)
 		fmt.Printf("%s\n\n", strings.Repeat("=", len(header)))
 
-		grid := buildGrid(start, end, played)
-		fmt.Print(grid)
+		fmt.Print(buildGrid(start, end, played))
 
-		summary := stats.Summarize(q.Matched, now)
 		fmt.Printf("\n  %s over %s, %s\n",
 			utility.FormatDurationRounded(summary.Total),
 			utility.Plural(summary.DaysPlayed, "play day"),
@@ -68,8 +67,10 @@ Defaults to the last year when no time filter is given.
 	},
 }
 
-// heatmapRange resolves the calendar bounds, falling back to the last year.
-func heatmapRange(q sessionQuery, now time.Time) (start, end time.Time) {
+// heatmapRange resolves the calendar bounds. Without a time filter it covers
+// the last year, trimmed to when tracking actually started so the grid does not
+// open on months of empty cells.
+func heatmapRange(q sessionQuery, first, now time.Time) (start, end time.Time) {
 	end = startOfDay(now)
 	if q.Filter.End != nil {
 		end = startOfDay(q.Filter.End.AddDate(0, 0, -1))
@@ -78,7 +79,12 @@ func heatmapRange(q sessionQuery, now time.Time) (start, end time.Time) {
 	if q.Filter.Start != nil {
 		return startOfDay(*q.Filter.Start), end
 	}
-	return end.AddDate(0, 0, -(defaultHeatmapDays - 1)), end
+
+	start = end.AddDate(0, 0, -(defaultHeatmapDays - 1))
+	if !first.IsZero() && first.After(start) {
+		start = startOfDay(first)
+	}
+	return start, end
 }
 
 // dailyTotals indexes playtime by the calendar day each session started on.
