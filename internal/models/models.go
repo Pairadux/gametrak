@@ -36,12 +36,28 @@ type SessionLog struct {
 	DurationSeconds int64  `json:"duration_seconds"`
 }
 
+// StartTime parses the session's recorded start timestamp.
+func (s SessionLog) StartTime() (time.Time, error) {
+	return time.Parse(time.RFC3339, s.Start)
+}
+
+// EndTime parses the session's recorded end timestamp.
+func (s SessionLog) EndTime() (time.Time, error) {
+	return time.Parse(time.RFC3339, s.End)
+}
+
+// Duration returns the recorded session length.
+func (s SessionLog) Duration() time.Duration {
+	return time.Duration(s.DurationSeconds) * time.Second
+}
+
 // Settings holds application settings
 type Settings struct {
 	Notifications  bool   `mapstructure:"notifications" yaml:"notifications"`
 	LogSessions    bool   `mapstructure:"log_sessions" yaml:"log_sessions"`
 	SessionsFile   string `mapstructure:"sessions_file" yaml:"sessions_file"`
 	HyprlandConf   string `mapstructure:"hyprland_conf" yaml:"hyprland_conf"`
+	StateFile      string `mapstructure:"state_file" yaml:"state_file,omitempty"`
 	MinSessionMins int    `mapstructure:"min_session_mins" yaml:"min_session_mins,omitempty"`
 }
 

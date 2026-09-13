@@ -2,6 +2,7 @@ package utility
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -79,4 +80,32 @@ func RoundDuration(d time.Duration) RoundedDuration {
 // Timestamp returns the current time formatted for logging
 func Timestamp() string {
 	return time.Now().Format("15:04:05")
+}
+
+// DurationCells renders a rounded duration as table cells:
+// hour count, hour word, minute count, minute word. The hour cells are empty
+// for durations under an hour and the minute cells are empty for whole hours,
+// so a Table drops the unused columns automatically.
+func DurationCells(d time.Duration) []string {
+	r := RoundDuration(d)
+
+	hourNum, hourWord := "", ""
+	if r.Hours > 0 {
+		hourNum = strconv.Itoa(r.Hours)
+		hourWord = "hours"
+		if r.Hours == 1 {
+			hourWord = "hour"
+		}
+	}
+
+	minNum, minWord := "", ""
+	if r.Mins > 0 || r.Hours == 0 {
+		minNum = strconv.Itoa(r.Mins)
+		minWord = "mins"
+		if r.Mins == 1 {
+			minWord = "min"
+		}
+	}
+
+	return []string{hourNum, hourWord, minNum, minWord}
 }
