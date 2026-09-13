@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -11,19 +12,22 @@ import (
 	"github.com/austincgause/gametrak/internal/hyprland"
 	"github.com/austincgause/gametrak/internal/models"
 	"github.com/austincgause/gametrak/internal/notify"
-	"github.com/austincgause/gametrak/internal/session"
+	"github.com/austincgause/gametrak/internal/tracker"
 	"github.com/austincgause/gametrak/internal/utility"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
+// heartbeatInterval bounds how much playtime can be lost if the daemon is
+// killed without a chance to shut down: the state file is refreshed this often
+// while games are running, and its timestamp becomes the recovered end time.
+const heartbeatInterval = time.Minute
+
 var (
-	cfg             models.Config
-	cfgFile         string
-	debugMode       bool
-	activeSessions  = make(map[string]*models.Session)
-	shutdownRequest bool
+	cfg       models.Config
+	cfgFile   string
+	debugMode bool
 )
 
 var rootCmd = &cobra.Command{
@@ -44,8 +48,8 @@ Running gametrak without subcommands starts the monitoring service.`,
 		}
 		return config.Load(&cfg)
 	},
-	Run: func(cmd *cobra.Command, args []string) {
-		runMonitor()
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runMonitor()
 	},
 }
 
@@ -87,163 +91,101 @@ func initConfig() {
 	}
 }
 
-func runMonitor() {
+func runMonitor() error {
 	socketPath, err := hyprland.GetSocketPath()
 	if err != nil {
 		notify.Error(err.Error())
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	fmt.Printf("[%s] Connecting to Hyprland socket: %s\n", utility.Timestamp(), socketPath)
+	logf("Connecting to Hyprland socket: %s", socketPath)
 
 	conn, err := hyprland.Connect()
 	if err != nil {
 		notify.Error(err.Error())
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 	defer conn.Close()
 
-	fmt.Printf("[%s] Connected. Listening for game events...\n", utility.Timestamp())
+	logf("Connected. Listening for game events...")
 
-	// Send startup notification
 	if cfg.Settings.Notifications {
 		notify.Started()
 	}
 
-	// Print watched games
-	var gameNames []string
+	var names []string
 	for _, g := range cfg.Games {
-		gameNames = append(gameNames, g.DisplayName())
+		names = append(names, g.DisplayName())
 	}
-	fmt.Printf("[%s] Watching for: %v\n", utility.Timestamp(), gameNames)
+	logf("Watching for: %s", strings.Join(names, ", "))
 
-	// Set up channels for events
+	track := tracker.New(cfg, os.Stdout, debugMode)
+	reconcile(track)
+
 	events := make(chan string)
 	errors := make(chan error)
-
-	// Handle graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	go hyprland.Listen(conn, events, errors)
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	heartbeat := time.NewTicker(heartbeatInterval)
+	defer heartbeat.Stop()
+
+	shutdown := func() error {
+		if err := track.Shutdown(time.Now()); err != nil {
+			return fmt.Errorf("failed to save active sessions: %w", err)
+		}
+		return nil
+	}
 
 	for {
 		select {
-		case <-sigChan:
-			shutdownRequest = true
-			fmt.Printf("\n[%s] Shutting down...\n", utility.Timestamp())
+		case <-signals:
+			fmt.Println()
+			logf("Shutting down...")
 			conn.Close()
-			return
+			return shutdown()
+
+		case <-heartbeat.C:
+			if len(track.Active()) == 0 {
+				continue
+			}
+			if err := track.Persist(time.Now()); err != nil {
+				logf("Warning: failed to save state: %v", err)
+			}
 
 		case err := <-errors:
-			if !shutdownRequest {
-				notify.Error(fmt.Sprintf("Socket error: %v", err))
-				fmt.Fprintf(os.Stderr, "Error reading from socket: %v\n", err)
-				os.Exit(1)
-			}
-			return
+			notify.Error(fmt.Sprintf("Socket error: %v", err))
+			shutdown()
+			return fmt.Errorf("error reading from socket: %w", err)
 
 		case line, ok := <-events:
 			if !ok {
-				return
+				// Hyprland closed the socket, so it is shutting down and any
+				// game windows are going with it.
+				logf("Hyprland socket closed")
+				return shutdown()
 			}
-			handleEvent(line)
+			track.HandleEvent(line, time.Now())
 		}
 	}
 }
 
-func handleEvent(line string) {
-	if debugMode {
-		fmt.Printf("[%s] DEBUG: %s\n", utility.Timestamp(), line)
-	}
-
-	eventType, data, ok := hyprland.ParseEvent(line)
-	if !ok {
+// reconcile catches up on sessions from a previous run and on game windows
+// that were already open. Failing to reach Hyprland is not fatal: the daemon
+// still tracks everything that opens from here on.
+func reconcile(track *tracker.Tracker) {
+	clients, err := hyprland.Clients()
+	if err != nil {
+		logf("Warning: could not query open windows: %v", err)
 		return
 	}
-
-	switch eventType {
-	case hyprland.EventOpenWindow:
-		handleOpenWindow(data)
-	case hyprland.EventCloseWindow:
-		handleCloseWindow(data)
+	if err := track.Reconcile(clients, time.Now()); err != nil {
+		logf("Warning: could not restore previous state: %v", err)
 	}
 }
 
-func handleOpenWindow(data string) {
-	event, ok := hyprland.ParseOpenWindow(data)
-	if !ok {
-		return
-	}
-
-	game, matched := utility.MatchGame(event.Class, cfg.Games)
-	if !matched {
-		return
-	}
-
-	// Determine the game name for logging/history
-	gameName := game.DisplayName()
-	if game.UseTitle && event.Title != "" {
-		gameName = utility.SanitizeTitle(event.Title)
-	}
-
-	sess := &models.Session{
-		Address:   event.Address,
-		Class:     event.Class,
-		Title:     event.Title,
-		GameName:  gameName,
-		StartTime: time.Now(),
-	}
-	activeSessions[event.Address] = sess
-
-	displayName := gameName
-
-	fmt.Printf("[%s] Game started: %s (class: %s, address: %s)\n",
-		utility.Timestamp(), displayName, event.Class, event.Address)
-}
-
-func handleCloseWindow(data string) {
-	event, ok := hyprland.ParseCloseWindow(data)
-	if !ok {
-		return
-	}
-
-	sess, exists := activeSessions[event.Address]
-	if !exists {
-		return
-	}
-
-	endTime := time.Now()
-	duration := endTime.Sub(sess.StartTime)
-	delete(activeSessions, event.Address)
-
-	displayName := sess.Title
-	if displayName == "" {
-		displayName = sess.GameName
-	}
-
-	fmt.Printf("[%s] Game ended: %s - Session: %s\n",
-		utility.Timestamp(), displayName, utility.FormatDurationExact(duration))
-
-	// Log session if enabled and meets minimum duration
-	minDuration := time.Duration(cfg.Settings.MinSessionMins) * time.Minute
-	if cfg.Settings.LogSessions && duration >= minDuration {
-		if err := session.Log(cfg.Settings.SessionsFile, *sess, endTime); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to log session: %v\n", err)
-		}
-	} else if cfg.Settings.LogSessions && duration < minDuration {
-		fmt.Printf("[%s] Session too short to log (min: %d mins)\n",
-			utility.Timestamp(), cfg.Settings.MinSessionMins)
-	}
-
-	// Send notification if enabled
-	if cfg.Settings.Notifications {
-		if err := notify.GameEnded(displayName, duration); err != nil {
-			if debugMode {
-				fmt.Fprintf(os.Stderr, "Warning: failed to send notification: %v\n", err)
-			}
-		}
-	}
+func logf(format string, args ...any) {
+	fmt.Printf("[%s] %s\n", utility.Timestamp(), fmt.Sprintf(format, args...))
 }

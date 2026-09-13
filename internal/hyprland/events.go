@@ -39,7 +39,7 @@ func ParseOpenWindow(data string) (OpenWindowEvent, bool) {
 	}
 
 	event := OpenWindowEvent{
-		Address:   parts[0],
+		Address:   NormalizeAddress(parts[0]),
 		Workspace: parts[1],
 		Class:     parts[2],
 	}
@@ -54,7 +54,7 @@ func ParseOpenWindow(data string) (OpenWindowEvent, bool) {
 // ParseCloseWindow parses the data portion of a closewindow event.
 // Format: ADDRESS
 func ParseCloseWindow(data string) (CloseWindowEvent, bool) {
-	address := strings.TrimSpace(data)
+	address := NormalizeAddress(data)
 	if address == "" {
 		return CloseWindowEvent{}, false
 	}

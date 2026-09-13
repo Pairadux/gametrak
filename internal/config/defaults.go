@@ -11,8 +11,10 @@ var (
 	DefaultConfigDir  = filepath.Join(xdg.ConfigHome, "gametrak")
 	DefaultDataDir    = filepath.Join(xdg.DataHome, "gametrak")
 	DefaultConfigFile = filepath.Join(DefaultConfigDir, "config.yaml")
+	DefaultStateDir   = filepath.Join(xdg.StateHome, "gametrak")
 	DefaultSessions   = filepath.Join(DefaultDataDir, "sessions.jsonl")
 	DefaultHyprConf   = filepath.Join(DefaultConfigDir, "games.conf")
+	DefaultStateFile  = filepath.Join(DefaultStateDir, "active.json")
 )
 
 // DefaultGames returns the default game patterns
@@ -34,6 +36,7 @@ func DefaultSettings() models.Settings {
 		LogSessions:    true,
 		SessionsFile:   DefaultSessions,
 		HyprlandConf:   DefaultHyprConf,
+		StateFile:      DefaultStateFile,
 		MinSessionMins: 15,
 	}
 }

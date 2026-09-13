@@ -8,8 +8,18 @@ import (
 	"path/filepath"
 )
 
-// GetSocketPath builds the Hyprland socket2 path from environment variables
+// GetSocketPath builds the Hyprland event socket path from environment variables
 func GetSocketPath() (string, error) {
+	return socketPath(".socket2.sock")
+}
+
+// GetCommandSocketPath builds the Hyprland request socket path, used for
+// querying state such as the list of open windows.
+func GetCommandSocketPath() (string, error) {
+	return socketPath(".socket.sock")
+}
+
+func socketPath(name string) (string, error) {
 	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" {
 		return "", fmt.Errorf("XDG_RUNTIME_DIR not set")
@@ -20,7 +30,7 @@ func GetSocketPath() (string, error) {
 		return "", fmt.Errorf("HYPRLAND_INSTANCE_SIGNATURE not set (is Hyprland running?)")
 	}
 
-	return filepath.Join(runtimeDir, "hypr", instanceSig, ".socket2.sock"), nil
+	return filepath.Join(runtimeDir, "hypr", instanceSig, name), nil
 }
 
 // Connect establishes a connection to the Hyprland event socket

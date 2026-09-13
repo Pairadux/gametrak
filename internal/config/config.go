@@ -23,6 +23,9 @@ func Load(cfg *models.Config) error {
 	if cfg.Settings.HyprlandConf == "" {
 		cfg.Settings.HyprlandConf = DefaultHyprConf
 	}
+	if cfg.Settings.StateFile == "" {
+		cfg.Settings.StateFile = DefaultStateFile
+	}
 
 	return nil
 }
