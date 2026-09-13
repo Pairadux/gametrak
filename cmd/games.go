@@ -68,16 +68,14 @@ The argument matches a window class exactly, or a display name
 case-insensitively. Recorded sessions are never touched.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		removed, err := config.RemoveGame(args[0])
+		removed, updated, err := config.RemoveGame(args[0])
 		if err != nil {
 			return err
 		}
+		cfg = updated
 
 		fmt.Printf("Removed game: %s (class: %s)\n", removed.DisplayName(), removed.Class)
 
-		if err := config.Load(&cfg); err != nil {
-			return fmt.Errorf("failed to reload config: %w", err)
-		}
 		if err := hyprland.GenerateGamesConf(cfg.Games, cfg.Settings.HyprlandConf); err != nil {
 			return fmt.Errorf("failed to regenerate games.conf: %w", err)
 		}

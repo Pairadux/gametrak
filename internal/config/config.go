@@ -54,22 +54,25 @@ func EnsureConfigExists() error {
 	return nil
 }
 
-// AddGame adds a new game to the configuration and saves it
-func AddGame(game models.Game) error {
+// AddGame adds a new game to the configuration and saves it, returning the
+// updated configuration. Callers must use the returned value rather than
+// reloading: viper holds the config it read at startup and does not see writes
+// made since.
+func AddGame(game models.Game) (models.Config, error) {
 	var cfg models.Config
 	if err := Load(&cfg); err != nil {
-		return err
+		return models.Config{}, err
 	}
 
 	// Check for duplicate
 	for _, existing := range cfg.Games {
 		if existing.Class == game.Class {
-			return fmt.Errorf("game with class %q already exists", game.Class)
+			return models.Config{}, fmt.Errorf("game with class %q already exists", game.Class)
 		}
 	}
 
 	cfg.Games = append(cfg.Games, game)
-	return Save(&cfg)
+	return cfg, Save(&cfg)
 }
 
 // Save writes the configuration to the config file
@@ -96,27 +99,28 @@ func Save(cfg *models.Config) error {
 }
 
 // RemoveGame deletes a game from the configuration by exact class or by
-// case-insensitive display name, returning the game that was removed.
-func RemoveGame(identifier string) (models.Game, error) {
+// case-insensitive display name. It returns the game that was removed and the
+// updated configuration.
+func RemoveGame(identifier string) (models.Game, models.Config, error) {
 	var cfg models.Config
 	if err := Load(&cfg); err != nil {
-		return models.Game{}, err
+		return models.Game{}, models.Config{}, err
 	}
 
 	index := -1
 	for i, game := range cfg.Games {
 		if game.Class == identifier || strings.EqualFold(game.DisplayName(), identifier) {
 			if index >= 0 {
-				return models.Game{}, fmt.Errorf("%q matches more than one game; remove it by class", identifier)
+				return models.Game{}, models.Config{}, fmt.Errorf("%q matches more than one game; remove it by class", identifier)
 			}
 			index = i
 		}
 	}
 	if index < 0 {
-		return models.Game{}, fmt.Errorf("no game matching %q", identifier)
+		return models.Game{}, models.Config{}, fmt.Errorf("no game matching %q", identifier)
 	}
 
 	removed := cfg.Games[index]
 	cfg.Games = append(cfg.Games[:index], cfg.Games[index+1:]...)
-	return removed, Save(&cfg)
+	return removed, cfg, Save(&cfg)
 }

@@ -35,20 +35,17 @@ Examples:
 			Prefix: gamePrefix,
 		}
 
-		if err := config.AddGame(game); err != nil {
+		updated, err := config.AddGame(game)
+		if err != nil {
 			return err
 		}
+		cfg = updated
 
 		fmt.Printf("Added game: %s (class: %s", game.DisplayName(), class)
 		if gamePrefix {
 			fmt.Print(", prefix match")
 		}
 		fmt.Println(")")
-
-		// Reload config and regenerate games.conf
-		if err := config.Load(&cfg); err != nil {
-			return fmt.Errorf("failed to reload config: %w", err)
-		}
 
 		if err := hyprland.GenerateGamesConf(cfg.Games, cfg.Settings.HyprlandConf); err != nil {
 			return fmt.Errorf("failed to regenerate games.conf: %w", err)
