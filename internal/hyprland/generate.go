@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/austincgause/gametrak/internal/models"
@@ -33,7 +34,7 @@ func BuildGameRegex(games []models.Game) string {
 
 	var patterns []string
 	for _, game := range games {
-		pattern := escapeRegex(game.Class)
+		pattern := regexp.QuoteMeta(game.Class)
 		if game.Prefix {
 			pattern += ".*"
 		}
@@ -41,17 +42,4 @@ func BuildGameRegex(games []models.Game) string {
 	}
 
 	return "^(" + strings.Join(patterns, "|") + ")$"
-}
-
-// escapeRegex escapes special regex characters in a string
-func escapeRegex(s string) string {
-	special := []string{"\\", ".", "+", "*", "?", "(", ")", "[", "]", "{", "}", "^", "$", "|"}
-	result := s
-	for _, char := range special {
-		// Don't escape if it's already part of the intended pattern
-		if char == "." {
-			result = strings.ReplaceAll(result, char, "\\"+char)
-		}
-	}
-	return result
 }

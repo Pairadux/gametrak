@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/austincgause/gametrak/internal/models"
+	"github.com/austincgause/gametrak/internal/utility"
 )
 
 // Log appends a completed session to the JSONL log file
@@ -44,20 +46,24 @@ func Log(sessionsFile string, session models.Session, endTime time.Time) error {
 	return nil
 }
 
-// LoadAll reads all sessions from the JSONL log file
+// LoadAll reads all sessions from the JSONL log file. Game names are sanitized
+// on read so entries written before title sanitization existed still group and
+// align correctly.
 func LoadAll(sessionsFile string) ([]models.SessionLog, error) {
-	data, err := os.ReadFile(sessionsFile)
+	f, err := os.Open(sessionsFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read sessions file: %w", err)
 	}
+	defer f.Close()
 
 	var sessions []models.SessionLog
-	lines := splitLines(data)
+	scanner := bufio.NewScanner(f)
 
-	for _, line := range lines {
+	for scanner.Scan() {
+		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
@@ -66,26 +72,13 @@ func LoadAll(sessionsFile string) ([]models.SessionLog, error) {
 		if err := json.Unmarshal(line, &entry); err != nil {
 			continue // Skip malformed lines
 		}
+		entry.Game = utility.SanitizeTitle(entry.Game)
 		sessions = append(sessions, entry)
 	}
 
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read sessions file: %w", err)
+	}
+
 	return sessions, nil
-}
-
-func splitLines(data []byte) [][]byte {
-	var lines [][]byte
-	start := 0
-
-	for i, b := range data {
-		if b == '\n' {
-			lines = append(lines, data[start:i])
-			start = i + 1
-		}
-	}
-
-	if start < len(data) {
-		lines = append(lines, data[start:])
-	}
-
-	return lines
 }
