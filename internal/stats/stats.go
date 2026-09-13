@@ -12,23 +12,25 @@ import (
 
 // GameTotal is the aggregate playtime for a single game.
 type GameTotal struct {
-	Game     string
-	Duration time.Duration
-	Sessions int
-	Last     time.Time
+	Game     string        `json:"game"`
+	Duration time.Duration `json:"-"`
+	Seconds  int64         `json:"duration_seconds"`
+	Sessions int           `json:"sessions"`
+	Last     time.Time     `json:"last_played"`
 }
 
 // Summary describes a set of sessions as a whole.
 type Summary struct {
-	Total         time.Duration
-	Sessions      int
-	ByGame        []GameTotal
-	Longest       models.SessionLog
-	First         time.Time
-	Last          time.Time
-	DaysPlayed    int
-	CurrentStreak int
-	LongestStreak int
+	Total         time.Duration     `json:"-"`
+	Seconds       int64             `json:"total_seconds"`
+	Sessions      int               `json:"sessions"`
+	ByGame        []GameTotal       `json:"by_game"`
+	Longest       models.SessionLog `json:"longest_session"`
+	First         time.Time         `json:"first_played"`
+	Last          time.Time         `json:"last_played"`
+	DaysPlayed    int               `json:"days_played"`
+	CurrentStreak int               `json:"current_streak"`
+	LongestStreak int               `json:"longest_streak"`
 }
 
 // Average returns the mean session length, or zero when there are no sessions.
@@ -90,8 +92,10 @@ func Summarize(sessions []models.SessionLog, now time.Time) Summary {
 	}
 
 	for _, total := range totals {
+		total.Seconds = int64(total.Duration.Seconds())
 		summary.ByGame = append(summary.ByGame, *total)
 	}
+	summary.Seconds = int64(summary.Total.Seconds())
 	sort.Slice(summary.ByGame, func(i, j int) bool {
 		if summary.ByGame[i].Duration != summary.ByGame[j].Duration {
 			return summary.ByGame[i].Duration > summary.ByGame[j].Duration
@@ -145,9 +149,11 @@ const (
 	Daily Period = iota
 	Weekly
 	Monthly
+	Weekday
+	Hourly
 )
 
-// ParsePeriod resolves a period name such as "day", "week", or "month".
+// ParsePeriod resolves a period name such as "day", "week", or "hour".
 func ParsePeriod(name string) (Period, error) {
 	switch strings.ToLower(name) {
 	case "day", "daily":
@@ -156,22 +162,61 @@ func ParsePeriod(name string) (Period, error) {
 		return Weekly, nil
 	case "month", "monthly":
 		return Monthly, nil
+	case "weekday", "dow":
+		return Weekday, nil
+	case "hour", "hourly":
+		return Hourly, nil
 	default:
-		return 0, fmt.Errorf("unknown period %q (want day, week, or month)", name)
+		return 0, fmt.Errorf("unknown period %q (want day, week, month, weekday, or hour)", name)
 	}
 }
 
 // Bucket is the aggregate playtime for one time period.
 type Bucket struct {
-	Label    string
-	Start    time.Time
-	Duration time.Duration
-	Sessions int
+	Label    string        `json:"label"`
+	Start    time.Time     `json:"start,omitzero"`
+	Duration time.Duration `json:"-"`
+	Seconds  int64         `json:"duration_seconds"`
+	Sessions int           `json:"sessions"`
 }
 
-// Bucketize groups sessions into consecutive periods, sorted oldest first.
-// Periods with no sessions are included so gaps are visible.
+// Bucketize groups sessions into periods. Chronological periods run oldest
+// first and include empty periods so gaps are visible; weekday and hourly
+// periods are distributions over every slot. A session counts entirely toward
+// the period it started in.
 func Bucketize(sessions []models.SessionLog, period Period, now time.Time) []Bucket {
+	switch period {
+	case Weekday:
+		return distribute(sessions, now, 7, func(t time.Time) int { return int(t.Weekday()) },
+			func(i int) string { return time.Weekday(i).String() })
+	case Hourly:
+		return distribute(sessions, now, 24, func(t time.Time) int { return t.Hour() },
+			func(i int) string { return fmt.Sprintf("%02d:00", i) })
+	}
+	return chronological(sessions, period, now)
+}
+
+// distribute aggregates sessions into a fixed number of categorical slots.
+func distribute(sessions []models.SessionLog, now time.Time, slots int, index func(time.Time) int, label func(int) string) []Bucket {
+	buckets := make([]Bucket, slots)
+	for i := range buckets {
+		buckets[i].Label = label(i)
+	}
+
+	for _, s := range sessions {
+		start, err := s.StartTime()
+		if err != nil {
+			continue
+		}
+		b := &buckets[index(start.In(now.Location()))]
+		b.Duration += s.Duration()
+		b.Seconds = int64(b.Duration.Seconds())
+		b.Sessions++
+	}
+	return buckets
+}
+
+func chronological(sessions []models.SessionLog, period Period, now time.Time) []Bucket {
 	loc := now.Location()
 	totals := make(map[time.Time]*Bucket)
 
@@ -188,6 +233,7 @@ func Bucketize(sessions []models.SessionLog, period Period, now time.Time) []Buc
 			totals[key] = bucket
 		}
 		bucket.Duration += s.Duration()
+		bucket.Seconds = int64(bucket.Duration.Seconds())
 		bucket.Sessions++
 	}
 

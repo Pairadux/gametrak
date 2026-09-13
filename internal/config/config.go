@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/austincgause/gametrak/internal/models"
 	"github.com/spf13/viper"
@@ -92,4 +93,30 @@ func Save(cfg *models.Config) error {
 	}
 
 	return nil
+}
+
+// RemoveGame deletes a game from the configuration by exact class or by
+// case-insensitive display name, returning the game that was removed.
+func RemoveGame(identifier string) (models.Game, error) {
+	var cfg models.Config
+	if err := Load(&cfg); err != nil {
+		return models.Game{}, err
+	}
+
+	index := -1
+	for i, game := range cfg.Games {
+		if game.Class == identifier || strings.EqualFold(game.DisplayName(), identifier) {
+			if index >= 0 {
+				return models.Game{}, fmt.Errorf("%q matches more than one game; remove it by class", identifier)
+			}
+			index = i
+		}
+	}
+	if index < 0 {
+		return models.Game{}, fmt.Errorf("no game matching %q", identifier)
+	}
+
+	removed := cfg.Games[index]
+	cfg.Games = append(cfg.Games[:index], cfg.Games[index+1:]...)
+	return removed, Save(&cfg)
 }

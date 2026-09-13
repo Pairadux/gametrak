@@ -109,3 +109,16 @@ func DurationCells(d time.Duration) []string {
 
 	return []string{hourNum, hourWord, minNum, minWord}
 }
+
+// FormatDelta formats a signed duration change, rounded like other displayed
+// durations. A zero change reads as "no change".
+func FormatDelta(d time.Duration) string {
+	switch {
+	case d > 0:
+		return "+" + FormatDurationRounded(d)
+	case d < 0:
+		return "-" + FormatDurationRounded(-d)
+	default:
+		return "no change"
+	}
+}

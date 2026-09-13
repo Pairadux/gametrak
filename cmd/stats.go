@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -16,23 +17,26 @@ import (
 const barWidth = 12
 
 var (
-	statsBy  string
-	statsTop int
+	statsBy   string
+	statsTop  int
+	statsJSON bool
 )
 
 var statsCmd = &cobra.Command{
 	Use:   "stats [filters...]",
 	Short: "Show aggregate game time statistics",
 	Long: `Display statistics about your game time including totals per game,
-session counts, averages, and play streaks.
+session counts, averages, and play streaks. When the filter covers a bounded
+period, totals are compared against the period before it.
 
-Use --by to add a breakdown over time.
+Use --by to add a breakdown: day, week, month, weekday, or hour.
 
 ` + filterArgsUsage,
 	Example: `  gametrak stats
   gametrak stats week
   gametrak stats month --by day
-  gametrak stats 2026 --top 5`,
+  gametrak stats --by hour
+  gametrak stats 2026-01 --top 5`,
 	ValidArgs: []string{"today", "yesterday", "week", "month", "year", "all"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var period stats.Period
@@ -44,35 +48,36 @@ Use --by to add a breakdown over time.
 			period = parsed
 		}
 
-		sessions, filter, total, err := loadFiltered(args)
+		q, err := runQuery(args)
 		if err != nil {
 			return err
 		}
-		if total == 0 {
-			fmt.Println("No sessions recorded yet.")
-			return nil
-		}
-		if len(sessions) == 0 {
-			fmt.Printf("No sessions match: %s\n", filter.Describe())
+		if q.report() {
 			return nil
 		}
 
 		now := time.Now()
-		summary := stats.Summarize(sessions, now)
+		summary := stats.Summarize(q.Matched, now)
+
+		var buckets []stats.Bucket
+		if statsBy != "" {
+			buckets = stats.Bucketize(q.Matched, period, now)
+		}
+
+		if statsJSON {
+			return printJSON(q, summary, buckets)
+		}
 
 		header := "Game Statistics"
-		if filter.Active() {
-			header += fmt.Sprintf(" (%s)", filter.Describe())
+		if q.Filter.Active() {
+			header += fmt.Sprintf(" (%s)", q.Filter.Describe())
 		}
 		fmt.Println(header)
 		fmt.Printf("%s\n\n", strings.Repeat("=", len(header)))
 
-		printSummary(summary)
+		printSummary(summary, previousSummary(q, now))
 		printByGame(summary)
-
-		if statsBy != "" {
-			printBreakdown(stats.Bucketize(sessions, period, now), statsBy)
-		}
+		printBreakdown(buckets, statsBy)
 
 		fmt.Println()
 		return nil
@@ -86,7 +91,37 @@ func durationTable() *output.Table {
 		Gaps("  ", " ", "  ", " ", "  ", "  ")
 }
 
-func printSummary(s stats.Summary) {
+// previousSummary aggregates the period immediately before the filtered one,
+// or nil when there is nothing comparable to measure against.
+func previousSummary(q sessionQuery, now time.Time) *stats.Summary {
+	previous, ok := q.Filter.Previous(now)
+	if !ok {
+		return nil
+	}
+	summary := stats.Summarize(previous.Apply(q.All), now)
+	if summary.Sessions == 0 {
+		return nil
+	}
+	return &summary
+}
+
+func printJSON(q sessionQuery, summary stats.Summary, buckets []stats.Bucket) error {
+	payload := struct {
+		Filter  string         `json:"filter,omitempty"`
+		Summary stats.Summary  `json:"summary"`
+		Buckets []stats.Bucket `json:"buckets,omitempty"`
+	}{
+		Filter:  q.Filter.Describe(),
+		Summary: summary,
+		Buckets: buckets,
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(payload)
+}
+
+func printSummary(s stats.Summary, previous *stats.Summary) {
 	table := output.NewTable(output.Left, output.Left)
 	table.Row("Total", fmt.Sprintf("%s across %s",
 		utility.FormatDurationRounded(s.Total), utility.Plural(s.Sessions, "session")))
@@ -107,6 +142,12 @@ func printSummary(s stats.Summary) {
 
 	if !s.First.IsZero() {
 		table.Row("Span", fmt.Sprintf("%s to %s", s.First.Format("2006-01-02"), s.Last.Format("2006-01-02")))
+	}
+
+	if previous != nil {
+		table.Row("Change", fmt.Sprintf("%s vs the period before (%s)",
+			utility.FormatDelta(s.Total-previous.Total),
+			utility.FormatDurationRounded(previous.Total)))
 	}
 
 	table.Print(os.Stdout)
@@ -168,6 +209,7 @@ func printBreakdown(buckets []stats.Bucket, period string) {
 func init() {
 	rootCmd.AddCommand(statsCmd)
 
-	statsCmd.Flags().StringVar(&statsBy, "by", "", "break down totals by day, week, or month")
+	statsCmd.Flags().StringVar(&statsBy, "by", "", "break down totals by day, week, month, weekday, or hour")
 	statsCmd.Flags().IntVar(&statsTop, "top", 0, "show only the top N games")
+	statsCmd.Flags().BoolVar(&statsJSON, "json", false, "output raw statistics as JSON")
 }

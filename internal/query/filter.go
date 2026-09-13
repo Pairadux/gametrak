@@ -18,7 +18,17 @@ type Filter struct {
 	End       *time.Time
 	Game      string
 	TimeLabel string
+
+	// step is how far back the equivalent preceding window sits. It is a
+	// calendar offset rather than a duration so that month and year windows
+	// compare against the same span of the previous month or year.
+	step step
 }
+
+// step is a calendar offset applied with time.Time.AddDate.
+type step struct{ years, months, days int }
+
+func (s step) zero() bool { return s == step{} }
 
 // Parse builds a Filter from positional command arguments. Arguments that look
 // like a time window (keywords, dates, months, ranges, or "30d") set the time
@@ -39,7 +49,7 @@ func Parse(args []string, now time.Time) (Filter, error) {
 		if f.TimeLabel != "" {
 			return Filter{}, fmt.Errorf("multiple time filters given: %q and %q", f.TimeLabel, w.label)
 		}
-		f.Start, f.End, f.TimeLabel = w.start, w.end, w.label
+		f.Start, f.End, f.TimeLabel, f.step = w.start, w.end, w.label, w.step
 	}
 
 	f.Game = strings.Join(gameWords, " ")
@@ -61,6 +71,34 @@ func (f Filter) Describe() string {
 		parts = append(parts, f.Game)
 	}
 	return strings.Join(parts, ", ")
+}
+
+// Previous returns the filter for the window immediately preceding this one,
+// for period-over-period comparison. An open-ended window is compared against
+// the same elapsed span of the previous period, so a partial week is measured
+// against the same days of the week before. It reports false when the window
+// is unbounded and there is nothing to compare against.
+func (f Filter) Previous(now time.Time) (Filter, bool) {
+	if f.Start == nil || f.step.zero() {
+		return Filter{}, false
+	}
+
+	start := f.Start.AddDate(f.step.years, f.step.months, f.step.days)
+	end := *f.Start
+	if f.End == nil {
+		// Measure the same elapsed span into the earlier period.
+		end = start.Add(now.Sub(*f.Start))
+	} else {
+		end = f.End.AddDate(f.step.years, f.step.months, f.step.days)
+	}
+
+	return Filter{
+		Start:     &start,
+		End:       &end,
+		Game:      f.Game,
+		TimeLabel: "previous " + f.TimeLabel,
+		step:      f.step,
+	}, true
 }
 
 // Match reports whether a session satisfies the filter. Sessions with an
@@ -103,6 +141,7 @@ func (f Filter) Apply(sessions []models.SessionLog) []models.SessionLog {
 type window struct {
 	start, end *time.Time
 	label      string
+	step       step
 }
 
 // parseWindow interprets a single argument as a time window. It reports
@@ -118,60 +157,61 @@ func parseWindow(arg string, now time.Time) (window, bool, error) {
 	case "all":
 		return window{label: "all time"}, true, nil
 	case "today":
-		return since(startOfDay(now), "today"), true, nil
+		return since(startOfDay(now), "today", days(1)), true, nil
 	case "yesterday":
 		start := startOfDay(now).AddDate(0, 0, -1)
-		return between(start, startOfDay(now), "yesterday"), true, nil
+		return between(start, startOfDay(now), "yesterday", days(1)), true, nil
 	case "week":
 		start := startOfDay(now).AddDate(0, 0, -int(now.Weekday()))
-		return since(start, "week"), true, nil
+		return since(start, "week", days(7)), true, nil
 	case "month":
 		y, m, _ := now.Date()
-		return since(time.Date(y, m, 1, 0, 0, 0, 0, loc), "month"), true, nil
+		return since(time.Date(y, m, 1, 0, 0, 0, 0, loc), "month", step{months: -1}), true, nil
 	case "year":
-		return since(time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc), "year"), true, nil
+		return since(time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc), "year", step{years: -1}), true, nil
 	}
 
 	if from, to, found := strings.Cut(token, ".."); found {
-		start, _, err := parsePeriod(from, loc)
+		start, _, _, err := parsePeriod(from, loc)
 		if err != nil {
 			return window{}, false, fmt.Errorf("invalid range start %q: %w", from, err)
 		}
-		_, end, err := parsePeriod(to, loc)
+		_, end, _, err := parsePeriod(to, loc)
 		if err != nil {
 			return window{}, false, fmt.Errorf("invalid range end %q: %w", to, err)
 		}
 		if !start.Before(end) {
 			return window{}, false, fmt.Errorf("range start %q is not before range end %q", from, to)
 		}
-		return between(start, end, from+".."+to), true, nil
+		span := int(end.Sub(start).Hours() / 24)
+		return between(start, end, from+".."+to, days(span)), true, nil
 	}
 
-	if days, ok := parseRelativeDays(token); ok {
-		start := startOfDay(now).AddDate(0, 0, -(days - 1))
-		return since(start, fmt.Sprintf("last %d days", days)), true, nil
+	if n, ok := parseRelativeDays(token); ok {
+		start := startOfDay(now).AddDate(0, 0, -(n - 1))
+		return since(start, fmt.Sprintf("last %d days", n), days(n)), true, nil
 	}
 
-	start, end, err := parsePeriod(token, loc)
+	start, end, back, err := parsePeriod(token, loc)
 	if err != nil {
 		return window{}, false, nil // not time-like; treat as a game name
 	}
 	if start.After(now) {
 		return window{}, false, fmt.Errorf("cannot query future date: %s", arg)
 	}
-	return between(start, end, token), true, nil
+	return between(start, end, token, back), true, nil
 }
 
-// parsePeriod parses a YYYY-MM-DD day or a YYYY-MM month and returns its
-// half-open bounds.
-func parsePeriod(token string, loc *time.Location) (start, end time.Time, err error) {
+// parsePeriod parses a YYYY-MM-DD day or a YYYY-MM month, returning its
+// half-open bounds and the offset to the equivalent preceding period.
+func parsePeriod(token string, loc *time.Location) (start, end time.Time, back step, err error) {
 	if d, err := time.ParseInLocation("2006-01-02", token, loc); err == nil {
-		return d, d.AddDate(0, 0, 1), nil
+		return d, d.AddDate(0, 0, 1), step{days: -1}, nil
 	}
 	if m, err := time.ParseInLocation("2006-01", token, loc); err == nil {
-		return m, m.AddDate(0, 1, 0), nil
+		return m, m.AddDate(0, 1, 0), step{months: -1}, nil
 	}
-	return time.Time{}, time.Time{}, fmt.Errorf("expected YYYY-MM-DD or YYYY-MM")
+	return time.Time{}, time.Time{}, step{}, fmt.Errorf("expected YYYY-MM-DD or YYYY-MM")
 }
 
 // parseRelativeDays parses shorthand like "30d" into a day count.
@@ -192,10 +232,14 @@ func startOfDay(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
-func since(start time.Time, label string) window {
-	return window{start: &start, label: label}
+func days(n int) step {
+	return step{days: -n}
 }
 
-func between(start, end time.Time, label string) window {
-	return window{start: &start, end: &end, label: label}
+func since(start time.Time, label string, back step) window {
+	return window{start: &start, label: label, step: back}
+}
+
+func between(start, end time.Time, label string, back step) window {
+	return window{start: &start, end: &end, label: label, step: back}
 }

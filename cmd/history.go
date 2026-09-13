@@ -30,30 +30,26 @@ or --limit to specify a different number. Any filter shows every match.
   gametrak history 2026-01-01..2026-01-31`,
 	ValidArgs: []string{"today", "yesterday", "week", "month", "year", "all"},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		sessions, filter, total, err := loadFiltered(args)
+		q, err := runQuery(args)
 		if err != nil {
 			return err
 		}
-		if total == 0 {
-			fmt.Println("No sessions recorded yet.")
-			return nil
-		}
-		if len(sessions) == 0 {
-			fmt.Printf("No sessions match: %s\n", filter.Describe())
+		if q.report() {
 			return nil
 		}
 
+		sessions := q.Matched
 		sortByStart(sessions, true)
 
 		// An explicit filter is a deliberate request, so it overrides the
 		// default row limit.
-		if !historyAll && !filter.Active() && historyLimit > 0 && historyLimit < len(sessions) {
+		if !historyAll && !q.Filter.Active() && historyLimit > 0 && historyLimit < len(sessions) {
 			sessions = sessions[:historyLimit]
 		}
 
 		header := "Recent game sessions"
-		if filter.Active() {
-			header = fmt.Sprintf("Game sessions (%s)", filter.Describe())
+		if q.Filter.Active() {
+			header = fmt.Sprintf("Game sessions (%s)", q.Filter.Describe())
 		}
 		fmt.Printf("%s:\n\n", header)
 

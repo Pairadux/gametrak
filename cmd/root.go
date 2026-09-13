@@ -41,6 +41,9 @@ Running gametrak without subcommands starts the monitoring service.`,
 	CompletionOptions: cobra.CompletionOptions{
 		HiddenDefaultCmd: true,
 	},
+	// A failed query is a runtime error, not a usage mistake; printing the
+	// full help text after it buries the message.
+	SilenceUsage: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for commands that don't need it
 		if cmd.Name() == "help" {
