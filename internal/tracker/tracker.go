@@ -22,6 +22,7 @@ type Tracker struct {
 	out      io.Writer
 	debug    bool
 	sessions map[string]*models.Session
+	logged   func()
 }
 
 // New creates a tracker that reports activity to out.
@@ -32,6 +33,13 @@ func New(cfg models.Config, out io.Writer, debug bool) *Tracker {
 		debug:    debug,
 		sessions: make(map[string]*models.Session),
 	}
+}
+
+// OnLogged sets a function to call after each session is written to the log,
+// such as a trigger to upload it. It runs on the caller's goroutine, so it
+// must not block.
+func (t *Tracker) OnLogged(f func()) {
+	t.logged = f
 }
 
 // Active returns the in-flight sessions, oldest first.
@@ -187,6 +195,8 @@ func (t *Tracker) finish(sess models.Session, end time.Time, label string, notif
 	default:
 		if err := session.Log(t.cfg.Settings.SessionsFile, sess, end); err != nil {
 			t.warnf("failed to log session: %v", err)
+		} else if t.logged != nil {
+			t.logged()
 		}
 	}
 

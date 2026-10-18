@@ -21,6 +21,12 @@ func Error(message string) error {
 	return send("Gametrak Error", message, "critical")
 }
 
+// SyncFailed sends a notification when uploading to Logbook fails for a
+// reason that retrying won't fix, such as a rejected service token
+func SyncFailed(message string) error {
+	return send("Gametrak: Logbook sync failed", message, "normal")
+}
+
 // Started sends a notification when gametrak starts monitoring
 func Started() error {
 	return send("Gametrak", "Now tracking game sessions", "low")

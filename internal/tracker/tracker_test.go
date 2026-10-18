@@ -83,6 +83,24 @@ func TestShortSessionIsNotLogged(t *testing.T) {
 	}
 }
 
+func TestOnLoggedRunsOnlyForSessionsWrittenToTheLog(t *testing.T) {
+	track, _ := newTestTracker(t)
+	calls := 0
+	track.OnLogged(func() { calls++ })
+
+	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
+	track.HandleEvent("closewindow>>a1", start.Add(5*time.Minute))
+	if calls != 0 {
+		t.Errorf("OnLogged ran %d times for a session too short to log", calls)
+	}
+
+	track.HandleEvent("openwindow>>a2,1,RimWorldLinux,RimWorld", start)
+	track.HandleEvent("closewindow>>a2", start.Add(90*time.Minute))
+	if calls != 1 {
+		t.Errorf("OnLogged ran %d times, want once for the logged session", calls)
+	}
+}
+
 func TestUnmatchedWindowIsIgnored(t *testing.T) {
 	track, settings := newTestTracker(t)
 
