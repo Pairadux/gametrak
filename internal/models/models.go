@@ -34,6 +34,11 @@ type SessionLog struct {
 	Start           string `json:"start"`
 	End             string `json:"end"`
 	DurationSeconds int64  `json:"duration_seconds"`
+
+	// Set once the session is synced with Logbook: the id of its row there,
+	// and the platform the row names. Sessions added on the site have no class.
+	Platform  string `json:"platform,omitempty"`
+	LogbookID string `json:"logbook_id,omitempty"`
 }
 
 // StartTime parses the session's recorded start timestamp.
@@ -61,8 +66,19 @@ type Settings struct {
 	MinSessionMins int    `mapstructure:"min_session_mins" yaml:"min_session_mins,omitempty"`
 }
 
+// Logbook configures syncing sessions with a sheet on a Logbook site. The
+// service token lives in CredentialsFile, never in the config itself.
+type Logbook struct {
+	Enabled         bool   `mapstructure:"enabled" yaml:"enabled"`
+	URL             string `mapstructure:"url" yaml:"url"`
+	Sheet           string `mapstructure:"sheet" yaml:"sheet"`
+	PollMins        int    `mapstructure:"poll_mins" yaml:"poll_mins"`
+	CredentialsFile string `mapstructure:"credentials_file" yaml:"credentials_file"`
+}
+
 // Config represents the full configuration structure
 type Config struct {
 	Games    []Game   `mapstructure:"games"`
 	Settings Settings `mapstructure:"settings"`
+	Logbook  Logbook  `mapstructure:"logbook"`
 }
