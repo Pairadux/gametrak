@@ -28,6 +28,20 @@ func Load(cfg *models.Config) error {
 		cfg.Settings.StateFile = DefaultStateFile
 	}
 
+	if cfg.Logbook.URL == "" {
+		cfg.Logbook.URL = DefaultLogbookURL
+	}
+	if cfg.Logbook.Sheet == "" {
+		cfg.Logbook.Sheet = DefaultLogbookSheet
+	}
+	if cfg.Logbook.CredentialsFile == "" {
+		cfg.Logbook.CredentialsFile = DefaultLogbookCredentials
+	}
+	// 0 is a real choice (no polling), so only a missing key gets the default.
+	if !viper.IsSet("logbook.poll_mins") {
+		cfg.Logbook.PollMins = DefaultLogbookPollMins
+	}
+
 	return nil
 }
 

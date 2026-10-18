@@ -15,6 +15,14 @@ var (
 	DefaultSessions   = filepath.Join(DefaultDataDir, "sessions.jsonl")
 	DefaultHyprConf   = filepath.Join(DefaultConfigDir, "games.conf")
 	DefaultStateFile  = filepath.Join(DefaultStateDir, "active.json")
+
+	DefaultLogbookCredentials = filepath.Join(DefaultConfigDir, "logbook-credentials.yaml")
+)
+
+const (
+	DefaultLogbookURL      = "https://logs.austingause.com"
+	DefaultLogbookSheet    = "gaming"
+	DefaultLogbookPollMins = 5
 )
 
 // DefaultGames returns the default game patterns
@@ -41,10 +49,21 @@ func DefaultSettings() models.Settings {
 	}
 }
 
+// DefaultLogbook returns the Logbook sync settings, off until enabled.
+func DefaultLogbook() models.Logbook {
+	return models.Logbook{
+		URL:             DefaultLogbookURL,
+		Sheet:           DefaultLogbookSheet,
+		PollMins:        DefaultLogbookPollMins,
+		CredentialsFile: DefaultLogbookCredentials,
+	}
+}
+
 // DefaultConfig returns a complete default configuration
 func DefaultConfig() models.Config {
 	return models.Config{
 		Games:    DefaultGames(),
 		Settings: DefaultSettings(),
+		Logbook:  DefaultLogbook(),
 	}
 }
