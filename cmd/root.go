@@ -123,6 +123,8 @@ func runMonitor() error {
 	logf("Watching for: %s", strings.Join(names, ", "))
 
 	track := tracker.New(cfg, os.Stdout, debugMode)
+	stopSync := startSync(track)
+	defer stopSync()
 	reconcile(track)
 
 	events := make(chan string)
