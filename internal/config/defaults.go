@@ -20,9 +20,8 @@ var (
 )
 
 const (
-	DefaultLogbookURL      = "https://logs.austingause.com"
-	DefaultLogbookSheet    = "gaming"
-	DefaultLogbookPollMins = 5
+	DefaultLogbookURL   = "https://logs.austingause.com"
+	DefaultLogbookSheet = "gaming"
 )
 
 // DefaultGames returns the default game patterns
@@ -54,7 +53,6 @@ func DefaultLogbook() models.Logbook {
 	return models.Logbook{
 		URL:             DefaultLogbookURL,
 		Sheet:           DefaultLogbookSheet,
-		PollMins:        DefaultLogbookPollMins,
 		CredentialsFile: DefaultLogbookCredentials,
 	}
 }

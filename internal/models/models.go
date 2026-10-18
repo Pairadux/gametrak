@@ -72,7 +72,6 @@ type Logbook struct {
 	Enabled         bool   `mapstructure:"enabled" yaml:"enabled"`
 	URL             string `mapstructure:"url" yaml:"url"`
 	Sheet           string `mapstructure:"sheet" yaml:"sheet"`
-	PollMins        int    `mapstructure:"poll_mins" yaml:"poll_mins"`
 	CredentialsFile string `mapstructure:"credentials_file" yaml:"credentials_file"`
 }
 

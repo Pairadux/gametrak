@@ -64,10 +64,12 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
   service token is in its own file (`logbook.credentials_file`, default
   `~/.config/gametrak/logbook-credentials.yaml`), which must be mode 0600; it
   never goes in config.yaml, which may live in a dotfiles repo
-- **When:** the daemon syncs at startup, after every logged session (the
-  tracker's `OnLogged` hook pokes a coalescing channel), and every
-  `logbook.poll_mins` minutes (0 = no polling). `gametrak sync` syncs now. Syncs
-  run on their own goroutine so network calls never stall the event loop
+- **When:** the daemon syncs at startup and after every logged session (the
+  tracker's `OnLogged` hook pokes a coalescing channel). **No polling**: the
+  owner doesn't want it, and site changes (mostly sessions added from an iOS
+  shortcut while the PC is off) can wait for the next startup or game.
+  `gametrak sync` syncs now. Syncs run on their own goroutine so network calls
+  never stall the event loop
 - **One cycle** (`Syncer.Sync`, under `logbook.lock` in the state dir so the
   daemon and the command never upload twice): read the sheet's change counter
   (`GET /api/v1/sheets/gaming/version`, one D1 row read); pull the whole sheet
@@ -87,7 +89,7 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
   keeps a session's exact seconds unless the site changed the minutes. Every
   upload is platform `PC`
 - A session the site rejects (400) is remembered in `logbook.json` and skipped
-  by automatic syncs, so polls don't resend it forever; `gametrak sync` retries
+  by automatic syncs, so it isn't resent after every game; `gametrak sync` retries
 - The daemon logs each new sync failure once, and sends a notification only for
   failures retrying won't fix (`logbook.Temporary` is false), e.g. a bad token
 - Testing against a local Logbook (`pnpm dev` in Logs-Site, which skips Access):
