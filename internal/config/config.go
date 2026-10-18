@@ -37,10 +37,6 @@ func Load(cfg *models.Config) error {
 	if cfg.Logbook.CredentialsFile == "" {
 		cfg.Logbook.CredentialsFile = DefaultLogbookCredentials
 	}
-	// 0 is a real choice (no polling), so only a missing key gets the default.
-	if !viper.IsSet("logbook.poll_mins") {
-		cfg.Logbook.PollMins = DefaultLogbookPollMins
-	}
 
 	return nil
 }

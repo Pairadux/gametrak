@@ -54,7 +54,7 @@ type syncState struct {
 	Version  int64     `json:"version"`
 	SyncedAt time.Time `json:"synced_at"`
 	// Rejected maps sessions the site refused to its reason. Automatic syncs
-	// skip them rather than resend them on every poll; a full sync retries.
+	// skip them rather than resend them after every game; a full sync retries.
 	Rejected map[string]string `json:"rejected,omitempty"`
 }
 
@@ -266,21 +266,15 @@ func (s *Syncer) saveState(state syncState) error {
 	return nil
 }
 
-// Run syncs whenever trigger fires and every interval (never, if zero) until
-// ctx is done, then returns. done receives each sync's outcome.
-func (s *Syncer) Run(ctx context.Context, trigger <-chan struct{}, interval time.Duration, done func(Result, error)) {
-	var tick <-chan time.Time
-	if interval > 0 {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		tick = ticker.C
-	}
+// Run syncs whenever trigger fires until ctx is done, then returns. There is
+// no timer: syncs happen when something calls for one. done receives each
+// sync's outcome.
+func (s *Syncer) Run(ctx context.Context, trigger <-chan struct{}, done func(Result, error)) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-trigger:
-		case <-tick:
 		}
 		result, err := s.Sync(ctx, false)
 		if ctx.Err() != nil {

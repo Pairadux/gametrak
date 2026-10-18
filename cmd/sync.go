@@ -25,8 +25,10 @@ Sessions without a row on the site are uploaded, oldest first, so the first
 sync uploads your whole history. Then the site wins: edits and deletions made
 there replace the local copy, and sessions added there are added here.
 
-While the daemon runs it syncs by itself: when it starts, after every logged
-session, and every logbook.poll_mins minutes (0 turns polling off). Running
+While the daemon runs it syncs by itself, with no polling: when it starts,
+and after every logged session. Each sync first checks the sheet's change
+counter and only downloads the sheet if it moved, so sessions added on the
+site (from a phone shortcut, say) arrive at the next startup or game. Running
 this command syncs now, pulls the whole sheet even if it looks unchanged, and
 tries again any session the site rejected before.
 
@@ -83,8 +85,8 @@ func newSyncer(logf func(format string, args ...any)) (*logbook.Syncer, error) {
 }
 
 // startSync syncs with Logbook in the background when it is enabled: right
-// away, after every logged session, and every poll_mins minutes. The returned
-// function stops it, giving a sync in progress a moment to finish.
+// away, and after every logged session. The returned function stops it,
+// giving a sync in progress a moment to finish.
 func startSync(track *tracker.Tracker) (stop func()) {
 	if !cfg.Logbook.Enabled {
 		return func() {}
@@ -112,7 +114,7 @@ func startSync(track *tracker.Tracker) (stop func()) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		syncer.Run(ctx, trigger, time.Duration(cfg.Logbook.PollMins)*time.Minute, reportSync())
+		syncer.Run(ctx, trigger, reportSync())
 	}()
 	logf("Syncing with Logbook: %s", syncer.Client.Target())
 
@@ -126,8 +128,8 @@ func startSync(track *tracker.Tracker) (stop func()) {
 }
 
 // reportSync logs each sync that did something and each new failure, once
-// rather than every poll while offline. Failures that retrying won't fix,
-// like a rejected token, also raise a notification.
+// rather than after every game while offline. Failures that retrying won't
+// fix, like a rejected token, also raise a notification.
 func reportSync() func(logbook.Result, error) {
 	lastErr := ""
 	return func(result logbook.Result, err error) {

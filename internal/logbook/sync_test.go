@@ -362,7 +362,7 @@ func TestRunSyncsOnTriggersUntilCancelled(t *testing.T) {
 	results := make(chan Result)
 	stopped := make(chan struct{})
 	go func() {
-		syncer.Run(ctx, trigger, 0, func(r Result, err error) {
+		syncer.Run(ctx, trigger, func(r Result, err error) {
 			if err != nil {
 				t.Errorf("sync failed: %v", err)
 			}
