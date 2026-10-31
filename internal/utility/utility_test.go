@@ -22,6 +22,10 @@ func TestSanitizeTitle(t *testing.T) {
 		{"newlines are stripped", "ARC\nRaiders", "ARCRaiders"},
 		{"punctuation survives", "Baldur's Gate 3: Patch", "Baldur's Gate 3: Patch"},
 		{"non-ascii letters survive", "Ōkami HD", "Ōkami HD"},
+		{"trailing spaces are trimmed", "DeadByDaylight  ", "DeadByDaylight"},
+		{"leading spaces are trimmed", "  Marvel Rivals", "Marvel Rivals"},
+		{"spaces left by stripped characters are trimmed", "RLDB ​ ", "RLDB"},
+		{"blank becomes empty", "   ", ""},
 		{"empty stays empty", "", ""},
 	}
 
