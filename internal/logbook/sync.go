@@ -166,7 +166,9 @@ func (s *Syncer) push(ctx context.Context, skip map[string]string, rejected *int
 	if len(pending) > 1 && s.Logf != nil {
 		s.Logf("Uploading %d sessions to Logbook", len(pending))
 	}
-	created := make(map[sessionKey]Row)
+	// Identical sessions share a key, so each key holds a row per copy
+	// uploaded, and every copy gets a row of its own when they are linked.
+	created := make(map[sessionKey][]Row)
 	for i, sess := range pending {
 		row, createErr := s.Client.Create(ctx, newRow(sess))
 		var apiErr *APIError
@@ -182,28 +184,32 @@ func (s *Syncer) push(ctx context.Context, skip map[string]string, rejected *int
 			err = createErr
 			break
 		}
-		created[keyOf(sess)] = row
+		created[keyOf(sess)] = append(created[keyOf(sess)], row)
+		uploaded++
 		if done := i + 1; s.Logf != nil && len(pending) > 50 && done%50 == 0 {
 			s.Logf("Uploaded %d of %d", done, len(pending))
 		}
 	}
 
-	if len(created) > 0 {
+	if uploaded > 0 {
 		updateErr := session.Update(s.SessionsFile, func(local []models.SessionLog) ([]models.SessionLog, bool) {
 			for i, sess := range local {
-				if row, ok := created[keyOf(sess)]; ok && sess.LogbookID == "" {
-					local[i].LogbookID = row.ID
-					local[i].Platform = row.Data.Platform
+				rows := created[keyOf(sess)]
+				if len(rows) == 0 || sess.LogbookID != "" {
+					continue
 				}
+				local[i].LogbookID = rows[0].ID
+				local[i].Platform = rows[0].Data.Platform
+				created[keyOf(sess)] = rows[1:]
 			}
 			return local, true
 		})
 		if updateErr != nil {
 			// The rows exist, so the next pull links them by start and game.
-			return len(created), updateErr
+			return uploaded, updateErr
 		}
 	}
-	return len(created), err
+	return uploaded, err
 }
 
 func newRow(sess models.SessionLog) NewRow {

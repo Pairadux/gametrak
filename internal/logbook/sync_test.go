@@ -183,6 +183,25 @@ func TestFirstSyncUploadsHistoryAndLinksIt(t *testing.T) {
 	}
 }
 
+func TestIdenticalSessionsEachLinkToTheirOwnRow(t *testing.T) {
+	fake, server := newFakeLogbook(t)
+	twice := recorded("Deadlock", "2026-10-30T21:55:57-04:00", 6458)
+	syncer := newTestSyncer(t, server, twice, twice)
+
+	if result := syncOnce(t, syncer, false); result.Uploaded != 2 {
+		t.Errorf("result = %+v, want 2 uploads", result)
+	}
+	local := localSessions(t, syncer)
+	if local[0].LogbookID == "" || local[0].LogbookID == local[1].LogbookID {
+		t.Errorf("ids = %q and %q, want a different row for each copy", local[0].LogbookID, local[1].LogbookID)
+	}
+
+	// No row is left unlinked for the next pull to add as a site session.
+	if result := syncOnce(t, syncer, true); result.Changes.Any() || fake.rowCount() != 2 {
+		t.Errorf("result = %+v with %d rows, want no changes and 2 rows", result, fake.rowCount())
+	}
+}
+
 func TestSyncSkipsThePullWhenOnlyItsOwnUploadsChangedTheSheet(t *testing.T) {
 	fake, server := newFakeLogbook(t)
 	syncer := newTestSyncer(t, server, recorded("Deadlock", "2026-10-15T20:00:00-04:00", 3600))
