@@ -143,6 +143,7 @@ func TestMatchGame(t *testing.T) {
 		{Class: "steam_app_", Name: "Steam Games", Prefix: true},
 		{Class: "RimWorldLinux", Name: "RimWorld"},
 		{Class: "deadlock.exe", Name: "Deadlock"},
+		{Class: "steam_app_1086940", Name: "BG3"},
 	}
 
 	tests := []struct {
@@ -157,6 +158,7 @@ func TestMatchGame(t *testing.T) {
 		{"exact patterns do not match prefixes", "RimWorldLinux.x86", "", false},
 		{"unknown class", "firefox", "", false},
 		{"match is case sensitive", "rimworldlinux", "", false},
+		{"an exact entry wins over an earlier prefix", "steam_app_1086940", "BG3", true},
 	}
 
 	for _, tc := range tests {
