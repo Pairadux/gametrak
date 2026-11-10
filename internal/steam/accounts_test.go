@@ -24,7 +24,7 @@ const loginUsers = `"users"
 	"76561198071376839"
 	{
 		"AccountName"		"me_login"
-		"PersonaName"		"Me"
+		"PersonaName"		"Player One"
 		"RememberPassword"		"1"
 		"WantsOfflineMode"		"0"
 		"SkipOfflineModeWarning"		"0"
@@ -35,7 +35,7 @@ const loginUsers = `"users"
 	"76561198182487950"
 	{
 		"AccountName"		"Them_Login"
-		"PersonaName"		"Them"
+		"PersonaName"		"Player Two"
 		"RememberPassword"		"1"
 		"WantsOfflineMode"		"0"
 		"SkipOfflineModeWarning"		"0"
@@ -77,18 +77,41 @@ func TestAccountsReadsLoginUsers(t *testing.T) {
 
 	writeFile(t, LoginUsersPath(root), loginUsers)
 	accounts, err := Accounts(root)
-	want := []Account{{ID: mine, Login: "me_login", Persona: "Me"}, {ID: theirs, Login: "Them_Login", Persona: "Them"}}
+	want := []Account{{ID: mine, Login: "me_login", Persona: "Player One"}, {ID: theirs, Login: "Them_Login", Persona: "Player Two"}}
 	if err != nil || fmt.Sprint(accounts) != fmt.Sprint(want) || accounts[0].Login != "me_login" {
 		t.Errorf("Accounts = %+v, %v; want %+v", accounts, err, want)
 	}
 	// The daemon's log names accounts without their login names.
-	if got := accounts[1].String(); got != "222222222 (Them)" {
+	if got := accounts[1].String(); got != "222222222 (Player Two)" {
 		t.Errorf("String = %q", got)
 	}
 
 	writeFile(t, LoginUsersPath(root), `"users" {`)
 	if _, err := Accounts(root); err == nil {
 		t.Error("Accounts of a broken file: want an error")
+	}
+}
+
+// A profile name that is the login name, or close to it, would put the login
+// name in the log: on the owner's Deck the other account uses one name for
+// both.
+func TestAnAccountsProfileNameIsLeftOutWhenItGivesAwayTheLogin(t *testing.T) {
+	for _, tc := range []struct {
+		login, persona, want string
+	}{
+		{"them_login", "Player Two", "222222222 (Player Two)"},
+		{"jojo_plays", "JoJo_Plays", "222222222"},
+		{"jojo_plays", "jojoplays", "222222222"},
+		{"jojo_plays", "JoJo Plays!", "222222222"},
+		{"jojo_plays92", "JoJo Plays", "222222222"},
+		{"jojo", "xX JoJo Xx", "222222222"},
+		{"jojo_plays", "", "222222222"},
+		{"jojo_plays", "★ ★", "222222222 (★ ★)"},
+		{"", "Player Two", "222222222 (Player Two)"},
+	} {
+		if got := (Account{ID: theirs, Login: tc.login, Persona: tc.persona}).String(); got != tc.want {
+			t.Errorf("login %q, profile name %q: String = %q, want %q", tc.login, tc.persona, got, tc.want)
+		}
 	}
 }
 
@@ -148,7 +171,7 @@ func TestOnlyTheChosenAccountsGamesCount(t *testing.T) {
 	if err != nil || len(windows) != 1 || windows[0] != motorways {
 		t.Fatalf("Snapshot = %+v, %v; want only my Mini Motorways", windows, err)
 	}
-	if log := ts.log(); !strings.Contains(log, "Not recording RimWorld: it's being played on another Steam account, 222222222 (Them)") {
+	if log := ts.log(); !strings.Contains(log, "Not recording RimWorld: it's being played on another Steam account, 222222222 (Player Two)") {
 		t.Errorf("logged %q, want a note that RimWorld is someone else's", log)
 	}
 	if strings.Contains(ts.log(), "me_login") || strings.Contains(strings.ToLower(ts.log()), "them_login") {
@@ -243,7 +266,7 @@ func TestAnotherAccountsGameEndsQuietly(t *testing.T) {
 	ts.quiet(t)
 	kill(theirGame)
 	ts.quiet(t)
-	if log := ts.log(); log != "Not recording Mini Motorways: it's being played on another Steam account, 222222222 (Them)" {
+	if log := ts.log(); log != "Not recording Mini Motorways: it's being played on another Steam account, 222222222 (Player Two)" {
 		t.Errorf("logged %q, want only the note that it's someone else's", log)
 	}
 
@@ -301,5 +324,22 @@ func TestTheAccountComesFromWhicheverProcessHasIt(t *testing.T) {
 	ts.OnlyAccount(mine)
 	if windows, _ := ts.Snapshot(); len(windows) != 1 || windows[0] != motorways {
 		t.Errorf("Snapshot = %+v, want my Mini Motorways; logged %q", windows, ts.log())
+	}
+}
+
+func TestTheLogNeverGivesAwayALoginThatIsAlsoAProfileName(t *testing.T) {
+	root, _ := fakeSteam(t)
+	writeFile(t, LoginUsersPath(root), strings.Replace(loginUsers, `"Player Two"`, `"them_login"`, 1))
+	proc := t.TempDir()
+	fakeGame(t, proc, fakePID, 294100, "Them_Login")
+
+	ts := openTestSource(t, root, proc)
+	ts.OnlyAccount(mine)
+	if windows, _ := ts.Snapshot(); len(windows) != 0 {
+		t.Fatalf("Snapshot = %+v, want nothing of mine running", windows)
+	}
+	want := "Not recording RimWorld: it's being played on another Steam account, 222222222"
+	if log := ts.log(); log != want {
+		t.Errorf("logged %q, want %q", log, want)
 	}
 }
