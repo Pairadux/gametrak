@@ -27,14 +27,14 @@ func Log(sessionsFile string, session models.Session, endTime time.Time) error {
 		return fmt.Errorf("failed to create sessions directory: %w", err)
 	}
 
-	duration := endTime.Sub(session.StartTime)
-
+	// The duration is the time played, which leaves out time asleep, so it
+	// can be shorter than the gap between start and end.
 	entry := models.SessionLog{
 		Game:            session.GameName,
 		Class:           session.Class,
 		Start:           session.StartTime.Format(time.RFC3339),
 		End:             endTime.Format(time.RFC3339),
-		DurationSeconds: int64(duration.Seconds()),
+		DurationSeconds: int64(session.Played(endTime).Seconds()),
 	}
 
 	data, err := json.Marshal(entry)

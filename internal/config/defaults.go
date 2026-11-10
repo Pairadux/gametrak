@@ -20,8 +20,10 @@ var (
 )
 
 const (
-	DefaultLogbookURL   = "https://logs.austingause.com"
-	DefaultLogbookSheet = "gaming"
+	DefaultLogbookURL      = "https://logs.austingause.com"
+	DefaultLogbookSheet    = "gaming"
+	DefaultLogbookPlatform = "PC"
+	DefaultSource          = "auto"
 )
 
 // DefaultGames returns the default game patterns
@@ -45,6 +47,7 @@ func DefaultSettings() models.Settings {
 		HyprlandConf:   DefaultHyprConf,
 		StateFile:      DefaultStateFile,
 		MinSessionMins: 15,
+		Source:         DefaultSource,
 	}
 }
 
@@ -54,6 +57,7 @@ func DefaultLogbook() models.Logbook {
 		URL:             DefaultLogbookURL,
 		Sheet:           DefaultLogbookSheet,
 		CredentialsFile: DefaultLogbookCredentials,
+		Platform:        DefaultLogbookPlatform,
 	}
 }
 

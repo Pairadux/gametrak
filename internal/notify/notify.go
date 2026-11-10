@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"time"
@@ -32,7 +33,12 @@ func Started() error {
 	return send("Gametrak", "Now tracking game sessions", "low")
 }
 
+// sendTimeout bounds a notification. Without a notification daemon, as in
+// the Steam Deck's Game Mode, notify-send can wait a long time for an answer.
+const sendTimeout = 5 * time.Second
+
 func send(title, body, urgency string) error {
-	cmd := exec.Command("notify-send", "-u", urgency, title, body)
-	return cmd.Run()
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "notify-send", "-u", urgency, title, body).Run()
 }

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/austincgause/gametrak/internal/hyprland"
 	"github.com/austincgause/gametrak/internal/models"
 	"github.com/austincgause/gametrak/internal/session"
+	"github.com/austincgause/gametrak/internal/source"
 	"github.com/austincgause/gametrak/internal/state"
 )
 
@@ -34,7 +34,23 @@ func newTestTracker(t *testing.T) (*Tracker, models.Settings) {
 		Settings: settings,
 	}
 
-	return New(cfg, io.Discard, false), settings
+	track := New(cfg, io.Discard, false)
+	track.UseClock(&fakeClock{boot: "boot-1"})
+	return track, settings
+}
+
+// fakeClock stands in for the kernel's sleep counter: tests move asleep
+// forward to simulate the machine being suspended.
+type fakeClock struct {
+	asleep time.Duration
+	boot   string
+}
+
+func (c *fakeClock) Asleep() time.Duration { return c.asleep }
+func (c *fakeClock) Boot() string          { return c.boot }
+
+func window(id, class, title string) source.Window {
+	return source.Window{ID: id, Class: class, Title: title}
 }
 
 func loggedSessions(t *testing.T, settings models.Settings) []models.SessionLog {
@@ -50,12 +66,12 @@ func loggedSessions(t *testing.T, settings models.Settings) []models.SessionLog 
 func TestOpenAndCloseRecordsSession(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
 	if len(track.Active()) != 1 {
 		t.Fatalf("active sessions = %d, want 1", len(track.Active()))
 	}
 
-	track.HandleEvent("closewindow>>a1", start.Add(90*time.Minute))
+	track.Closed("a1", start.Add(90*time.Minute))
 	if len(track.Active()) != 0 {
 		t.Errorf("active sessions = %d, want 0 after close", len(track.Active()))
 	}
@@ -75,8 +91,8 @@ func TestOpenAndCloseRecordsSession(t *testing.T) {
 func TestShortSessionIsNotLogged(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
-	track.HandleEvent("closewindow>>a1", start.Add(5*time.Minute))
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
+	track.Closed("a1", start.Add(5*time.Minute))
 
 	if got := loggedSessions(t, settings); len(got) != 0 {
 		t.Errorf("logged %d sessions, want none below the minimum duration", len(got))
@@ -88,14 +104,14 @@ func TestOnLoggedRunsOnlyForSessionsWrittenToTheLog(t *testing.T) {
 	calls := 0
 	track.OnLogged(func() { calls++ })
 
-	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
-	track.HandleEvent("closewindow>>a1", start.Add(5*time.Minute))
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
+	track.Closed("a1", start.Add(5*time.Minute))
 	if calls != 0 {
 		t.Errorf("OnLogged ran %d times for a session too short to log", calls)
 	}
 
-	track.HandleEvent("openwindow>>a2,1,RimWorldLinux,RimWorld", start)
-	track.HandleEvent("closewindow>>a2", start.Add(90*time.Minute))
+	track.Opened(window("a2", "RimWorldLinux", "RimWorld"), start)
+	track.Closed("a2", start.Add(90*time.Minute))
 	if calls != 1 {
 		t.Errorf("OnLogged ran %d times, want once for the logged session", calls)
 	}
@@ -104,12 +120,12 @@ func TestOnLoggedRunsOnlyForSessionsWrittenToTheLog(t *testing.T) {
 func TestUnmatchedWindowIsIgnored(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,firefox,Mozilla Firefox", start)
+	track.Opened(window("a1", "firefox", "Mozilla Firefox"), start)
 	if len(track.Active()) != 0 {
 		t.Fatalf("active sessions = %d, want 0", len(track.Active()))
 	}
 
-	track.HandleEvent("closewindow>>a1", start.Add(time.Hour))
+	track.Closed("a1", start.Add(time.Hour))
 	if got := loggedSessions(t, settings); len(got) != 0 {
 		t.Errorf("logged %d sessions, want none", len(got))
 	}
@@ -118,8 +134,8 @@ func TestUnmatchedWindowIsIgnored(t *testing.T) {
 func TestTitleIsSanitizedAndUsedWhenConfigured(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,steam_app_1422450,ARC\u200bRaiders", start)
-	track.HandleEvent("closewindow>>a1", start.Add(time.Hour))
+	track.Opened(window("a1", "steam_app_1422450", "ARC\u200bRaiders"), start)
+	track.Closed("a1", start.Add(time.Hour))
 
 	sessions := loggedSessions(t, settings)
 	if len(sessions) != 1 {
@@ -133,7 +149,7 @@ func TestTitleIsSanitizedAndUsedWhenConfigured(t *testing.T) {
 func TestStateTracksActiveSessions(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
 
 	saved, err := state.Load(settings.StateFile)
 	if err != nil {
@@ -143,7 +159,7 @@ func TestStateTracksActiveSessions(t *testing.T) {
 		t.Fatalf("state = %+v, want one RimWorld session", saved.Sessions)
 	}
 
-	track.HandleEvent("closewindow>>a1", start.Add(time.Hour))
+	track.Closed("a1", start.Add(time.Hour))
 
 	saved, err = state.Load(settings.StateFile)
 	if err != nil {
@@ -163,8 +179,8 @@ func TestReconcileResumesStillOpenWindow(t *testing.T) {
 		t.Fatalf("failed to seed state: %v", err)
 	}
 
-	clients := []hyprland.Client{{Address: "a1", Class: "RimWorldLinux", Title: "RimWorld"}}
-	if err := track.Reconcile(clients, start.Add(2*time.Hour)); err != nil {
+	open := []source.Window{window("a1", "RimWorldLinux", "RimWorld")}
+	if err := track.Reconcile(open, start.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
 
@@ -212,11 +228,11 @@ func TestReconcileRecordsSessionWhoseWindowClosed(t *testing.T) {
 func TestReconcileAdoptsUntrackedGameWindow(t *testing.T) {
 	track, _ := newTestTracker(t)
 
-	clients := []hyprland.Client{
-		{Address: "a1", Class: "RimWorldLinux", Title: "RimWorld"},
-		{Address: "b2", Class: "firefox", Title: "Mozilla Firefox"},
+	open := []source.Window{
+		window("a1", "RimWorldLinux", "RimWorld"),
+		window("b2", "firefox", "Mozilla Firefox"),
 	}
-	if err := track.Reconcile(clients, start); err != nil {
+	if err := track.Reconcile(open, start); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
 
@@ -232,7 +248,7 @@ func TestReconcileAdoptsUntrackedGameWindow(t *testing.T) {
 func TestShutdownDefersRatherThanSplittingSessions(t *testing.T) {
 	track, settings := newTestTracker(t)
 
-	track.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
 	if err := track.Shutdown(start.Add(time.Hour)); err != nil {
 		t.Fatalf("Shutdown returned error: %v", err)
 	}
@@ -257,7 +273,7 @@ func TestShutdownDefersRatherThanSplittingSessions(t *testing.T) {
 
 func TestRestartDoesNotSplitAnOngoingSession(t *testing.T) {
 	first, settings := newTestTracker(t)
-	first.HandleEvent("openwindow>>a1,1,RimWorldLinux,RimWorld", start)
+	first.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
 	if err := first.Shutdown(start.Add(time.Hour)); err != nil {
 		t.Fatalf("Shutdown returned error: %v", err)
 	}
@@ -267,12 +283,13 @@ func TestRestartDoesNotSplitAnOngoingSession(t *testing.T) {
 		Games:    []models.Game{{Class: "RimWorldLinux", Name: "RimWorld"}},
 		Settings: settings,
 	}, io.Discard, false)
+	second.UseClock(&fakeClock{boot: "boot-1"})
 
-	clients := []hyprland.Client{{Address: "a1", Class: "RimWorldLinux", Title: "RimWorld"}}
-	if err := second.Reconcile(clients, start.Add(70*time.Minute)); err != nil {
+	open := []source.Window{window("a1", "RimWorldLinux", "RimWorld")}
+	if err := second.Reconcile(open, start.Add(70*time.Minute)); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
 	}
-	second.HandleEvent("closewindow>>a1", start.Add(3*time.Hour))
+	second.Closed("a1", start.Add(3*time.Hour))
 
 	sessions := loggedSessions(t, settings)
 	if len(sessions) != 1 {
@@ -280,5 +297,173 @@ func TestRestartDoesNotSplitAnOngoingSession(t *testing.T) {
 	}
 	if want := int64((3 * time.Hour).Seconds()); sessions[0].DurationSeconds != want {
 		t.Errorf("duration = %d, want the full %d seconds", sessions[0].DurationSeconds, want)
+	}
+}
+
+func TestNamesPreferAnExactConfigEntryThenTheSourcesNameThenTheTitle(t *testing.T) {
+	track, _ := newTestTracker(t)
+	track.cfg.Games = append(track.cfg.Games, models.Game{Class: "steam_app_1086940", Name: "BG3"})
+
+	steam := func(id, class, title, name string) source.Window {
+		return source.Window{ID: id, Class: class, Title: title, Name: name}
+	}
+	track.Opened(steam("a1", "steam_app_1086940", "Baldur's Gate 3 (v4.1)", "Baldur's Gate 3"), start)
+	track.Opened(steam("a2", "steam_app_1145360", "Hades II  ", "Hades II"), start)
+	track.Opened(steam("a3", "steam_app_1422450", "ARC Raiders", ""), start)
+	track.Opened(steam("a4", "RimWorldLinux", "RimWorld by Ludeon", ""), start)
+	track.Opened(source.Window{ID: "steam:1127500", Class: "steam_app_1127500", Name: "Mini Motorways", Game: true}, start)
+	track.Opened(source.Window{ID: "x", Class: "unknown", Title: "Some Game", Game: true}, start)
+	track.Opened(steam("a5", "firefox", "Mozilla Firefox", ""), start)
+
+	want := map[string]string{
+		"a1":            "BG3",            // an exact class in the config wins
+		"a2":            "Hades II",       // Steam's name beats the window title
+		"a3":            "ARC Raiders",    // no Steam name: the title, as configured
+		"a4":            "RimWorld",       // a native game keeps its configured name
+		"steam:1127500": "Mini Motorways", // Steam source games need no config entry
+		"x":             "Some Game",
+	}
+	active := track.Active()
+	if len(active) != len(want) {
+		t.Fatalf("active = %+v, want %d sessions and no Firefox", active, len(want))
+	}
+	for _, s := range active {
+		if s.GameName != want[s.Address] {
+			t.Errorf("%s named %q, want %q", s.Address, s.GameName, want[s.Address])
+		}
+	}
+}
+
+func TestOpeningATrackedWindowAgainKeepsItsStart(t *testing.T) {
+	track, _ := newTestTracker(t)
+	w := source.Window{ID: "steam:1", Class: "steam_app_1", Name: "Game", Game: true}
+
+	track.Opened(w, start)
+	track.Opened(w, start.Add(time.Hour))
+	if active := track.Active(); len(active) != 1 || !active[0].StartTime.Equal(start) {
+		t.Errorf("active = %+v, want one session from the first open", active)
+	}
+}
+
+func newSleepyTracker(t *testing.T) (*Tracker, models.Settings, *fakeClock) {
+	t.Helper()
+	track, settings := newTestTracker(t)
+	clock := &fakeClock{asleep: 7 * time.Minute, boot: "boot-1"}
+	track.UseClock(clock)
+	return track, settings, clock
+}
+
+func TestTimeAsleepIsNotCountedAsPlayed(t *testing.T) {
+	track, settings, clock := newSleepyTracker(t)
+
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
+	clock.asleep += 30 * time.Minute // the machine sleeps for half an hour mid-game
+	track.Closed("a1", start.Add(90*time.Minute))
+
+	sessions := loggedSessions(t, settings)
+	if len(sessions) != 1 {
+		t.Fatalf("logged %d sessions, want 1", len(sessions))
+	}
+	if want := int64((60 * time.Minute).Seconds()); sessions[0].DurationSeconds != want {
+		t.Errorf("duration = %d, want %d (90 minutes less 30 asleep)", sessions[0].DurationSeconds, want)
+	}
+	// Start and end are still the real times the game opened and closed.
+	if end, _ := sessions[0].EndTime(); !end.Equal(start.Add(90 * time.Minute)) {
+		t.Errorf("end = %v, want %v", end, start.Add(90*time.Minute))
+	}
+}
+
+func TestTheMinimumAppliesToTimePlayedNotTimeAsleep(t *testing.T) {
+	track, settings, clock := newSleepyTracker(t)
+
+	track.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
+	clock.asleep += time.Hour
+	track.Closed("a1", start.Add(70*time.Minute)) // 10 minutes played, under the 15 minimum
+
+	if got := loggedSessions(t, settings); len(got) != 0 {
+		t.Errorf("logged %+v, want nothing: only 10 minutes were played", got)
+	}
+}
+
+func TestSleepCountedBeforeARestartIsKept(t *testing.T) {
+	first, settings, clock := newSleepyTracker(t)
+	first.Opened(window("a1", "RimWorldLinux", "RimWorld"), start)
+	clock.asleep += 20 * time.Minute
+	if err := first.Shutdown(start.Add(time.Hour)); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+
+	saved, _ := state.Load(settings.StateFile)
+	if len(saved.Sessions) != 1 || saved.Sessions[0].Paused != 20*time.Minute {
+		t.Fatalf("state = %+v, want the 20 minutes asleep saved", saved.Sessions)
+	}
+
+	// Same boot: the next run picks the session up and keeps counting sleep.
+	second := New(first.cfg, io.Discard, false)
+	second.UseClock(clock)
+	if err := second.Reconcile([]source.Window{window("a1", "RimWorldLinux", "RimWorld")}, start.Add(61*time.Minute)); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+	clock.asleep += 10 * time.Minute
+	second.Closed("a1", start.Add(2*time.Hour))
+
+	sessions := loggedSessions(t, settings)
+	if len(sessions) != 1 {
+		t.Fatalf("logged %d sessions, want 1", len(sessions))
+	}
+	if want := int64((90 * time.Minute).Seconds()); sessions[0].DurationSeconds != want {
+		t.Errorf("duration = %d, want %d (2 hours less 30 minutes asleep)", sessions[0].DurationSeconds, want)
+	}
+}
+
+func TestARebootEndsTheSessionEvenIfTheSameIDIsOpenAgain(t *testing.T) {
+	first, settings, clock := newSleepyTracker(t)
+	game := source.Window{ID: "steam:1127500", Class: "steam_app_1127500", Name: "Mini Motorways", Game: true}
+	first.Opened(game, start)
+	clock.asleep += 5 * time.Minute
+	if err := first.Persist(start.Add(40 * time.Minute)); err != nil {
+		t.Fatalf("Persist returned error: %v", err)
+	}
+
+	// After a reboot the counter starts over, and the game was relaunched.
+	second := New(first.cfg, io.Discard, false)
+	second.UseClock(&fakeClock{boot: "boot-2"})
+	if err := second.Reconcile([]source.Window{game}, start.Add(3*time.Hour)); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+
+	sessions := loggedSessions(t, settings)
+	if len(sessions) != 1 {
+		t.Fatalf("logged %d sessions, want the one from before the reboot", len(sessions))
+	}
+	// It ended at the last state write, less the sleep counted by then.
+	if want := int64((35 * time.Minute).Seconds()); sessions[0].DurationSeconds != want {
+		t.Errorf("duration = %d, want %d", sessions[0].DurationSeconds, want)
+	}
+	if active := second.Active(); len(active) != 1 || !active[0].StartTime.Equal(start.Add(3*time.Hour)) {
+		t.Errorf("active = %+v, want a new session starting now", active)
+	}
+}
+
+func TestStateFromBeforeSleepTrackingStillResumes(t *testing.T) {
+	track, settings, clock := newSleepyTracker(t)
+	// An older gametrak wrote this state, with no boot or sleep fields.
+	old := []models.Session{{Address: "a1", Class: "RimWorldLinux", GameName: "RimWorld", StartTime: start}}
+	if err := state.Save(settings.StateFile, old, start.Add(time.Hour)); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	if err := track.Reconcile([]source.Window{window("a1", "RimWorldLinux", "RimWorld")}, start.Add(time.Hour)); err != nil {
+		t.Fatalf("Reconcile returned error: %v", err)
+	}
+	clock.asleep += 15 * time.Minute
+	track.Closed("a1", start.Add(2*time.Hour))
+
+	sessions := loggedSessions(t, settings)
+	if len(sessions) != 1 {
+		t.Fatalf("logged %d sessions, want 1", len(sessions))
+	}
+	if want := int64((105 * time.Minute).Seconds()); sessions[0].DurationSeconds != want {
+		t.Errorf("duration = %d, want %d (sleep counted from the resume on)", sessions[0].DurationSeconds, want)
 	}
 }

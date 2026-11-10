@@ -1,4 +1,6 @@
-// Package tracker turns Hyprland window events into recorded game sessions.
+// Package tracker turns game windows opening and closing into recorded game
+// sessions. It doesn't know where the windows come from: Hyprland and Steam
+// each have a source that reports them.
 package tracker
 
 import (
@@ -7,10 +9,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/austincgause/gametrak/internal/hyprland"
 	"github.com/austincgause/gametrak/internal/models"
 	"github.com/austincgause/gametrak/internal/notify"
 	"github.com/austincgause/gametrak/internal/session"
+	"github.com/austincgause/gametrak/internal/sleepclock"
+	"github.com/austincgause/gametrak/internal/source"
 	"github.com/austincgause/gametrak/internal/state"
 	"github.com/austincgause/gametrak/internal/utility"
 )
@@ -23,6 +26,7 @@ type Tracker struct {
 	debug    bool
 	sessions map[string]*models.Session
 	logged   func()
+	clock    sleepclock.Clock
 }
 
 // New creates a tracker that reports activity to out.
@@ -32,7 +36,13 @@ func New(cfg models.Config, out io.Writer, debug bool) *Tracker {
 		out:      out,
 		debug:    debug,
 		sessions: make(map[string]*models.Session),
+		clock:    sleepclock.System{},
 	}
+}
+
+// UseClock replaces the clock that measures time asleep, for tests.
+func (t *Tracker) UseClock(clock sleepclock.Clock) {
+	t.clock = clock
 }
 
 // OnLogged sets a function to call after each session is written to the log,
@@ -42,11 +52,14 @@ func (t *Tracker) OnLogged(f func()) {
 	t.logged = f
 }
 
-// Active returns the in-flight sessions, oldest first.
+// Active returns the in-flight sessions, oldest first, with the time asleep
+// so far in Paused.
 func (t *Tracker) Active() []models.Session {
 	sessions := make([]models.Session, 0, len(t.sessions))
 	for _, s := range t.sessions {
-		sessions = append(sessions, *s)
+		active := *s
+		active.Paused = t.paused(*s)
+		sessions = append(sessions, active)
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartTime.Before(sessions[j].StartTime) })
 	return sessions
@@ -56,22 +69,30 @@ func (t *Tracker) Active() []models.Session {
 // previous run are resumed when their window is still open, and recorded as
 // ended when it is not. Game windows that were already open but never tracked
 // are adopted starting now.
-func (t *Tracker) Reconcile(clients []hyprland.Client, now time.Time) error {
+func (t *Tracker) Reconcile(open []source.Window, now time.Time) error {
 	previous, err := state.Load(t.cfg.Settings.StateFile)
 	if err != nil {
 		return err
 	}
 
-	untracked := make(map[string]hyprland.Client)
-	for _, client := range clients {
-		if _, matched := utility.MatchGame(client.Class, t.cfg.Games); matched {
-			untracked[client.Address] = client
+	untracked := make(map[string]source.Window)
+	for _, w := range open {
+		if _, ok := t.gameName(w); ok {
+			untracked[w.ID] = w
 		}
 	}
 
+	boot := t.clock.Boot()
 	for _, active := range previous.Sessions {
-		if _, stillOpen := untracked[active.Address]; stillOpen {
+		// A reboot always ends a game, so a session from an earlier boot is
+		// over even if a window with the same ID is open now.
+		sameBoot := active.Boot == "" || active.Boot == boot
+		if _, stillOpen := untracked[active.Address]; stillOpen && sameBoot {
 			resumed := active.Session()
+			if active.Boot == "" {
+				// Written before sleep was tracked: count sleep from now on.
+				resumed.Boot, resumed.AsleepAtStart = boot, t.clock.Asleep()
+			}
 			t.sessions[resumed.Address] = &resumed
 			delete(untracked, active.Address)
 			t.logf("Resumed session: %s (running since %s)", resumed.GameName, resumed.StartTime.Format("2006-01-02 15:04"))
@@ -79,41 +100,57 @@ func (t *Tracker) Reconcile(clients []hyprland.Client, now time.Time) error {
 		}
 
 		// The window is gone, so the session ended while gametrak was not
-		// running. The last state write is the best estimate of when.
+		// running. The last state write is the best estimate of when, and the
+		// sleep it had counted by then is what to subtract.
 		end := previous.UpdatedAt
 		if end.Before(active.Start) {
 			end = active.Start
 		}
-		t.finish(active.Session(), end, "Recovered session", false)
+		ended := active.Session()
+		t.finish(ended, end, active.Paused, "Recovered session", false)
 	}
 
-	for _, client := range untracked {
-		t.track(client.Address, client.Class, client.Title, now)
+	for _, w := range untracked {
+		t.track(w, now)
 	}
 
 	return t.Persist(now)
 }
 
-// HandleEvent processes one raw line from the Hyprland event socket.
-func (t *Tracker) HandleEvent(line string, now time.Time) {
-	if t.debug {
-		t.logf("DEBUG: %s", line)
+// Apply processes one event from a source.
+func (t *Tracker) Apply(event source.Event, now time.Time) {
+	switch event.Kind {
+	case source.Opened:
+		t.Opened(event.Window, now)
+	case source.Closed:
+		t.Closed(event.Window.ID, now)
 	}
+}
 
-	eventType, data, ok := hyprland.ParseEvent(line)
-	if !ok {
+// Opened starts a session if the window is a game.
+func (t *Tracker) Opened(w source.Window, now time.Time) {
+	if _, tracked := t.sessions[w.ID]; tracked {
 		return
 	}
+	if !t.track(w, now) {
+		return
+	}
+	if err := t.Persist(now); err != nil {
+		t.warnf("failed to save state: %v", err)
+	}
+}
 
-	switch eventType {
-	case hyprland.EventOpenWindow:
-		if event, ok := hyprland.ParseOpenWindow(data); ok {
-			t.openWindow(event, now)
-		}
-	case hyprland.EventCloseWindow:
-		if event, ok := hyprland.ParseCloseWindow(data); ok {
-			t.closeWindow(event, now)
-		}
+// Closed ends the session for the window with this ID, if there is one.
+func (t *Tracker) Closed(id string, now time.Time) {
+	sess, exists := t.sessions[id]
+	if !exists {
+		return
+	}
+	delete(t.sessions, id)
+
+	t.finish(*sess, now, t.paused(*sess), "Game ended", t.cfg.Settings.Notifications)
+	if err := t.Persist(now); err != nil {
+		t.warnf("failed to save state: %v", err)
 	}
 }
 
@@ -133,64 +170,80 @@ func (t *Tracker) Shutdown(now time.Time) error {
 	return t.Persist(now)
 }
 
-func (t *Tracker) openWindow(event hyprland.OpenWindowEvent, now time.Time) {
-	if _, matched := utility.MatchGame(event.Class, t.cfg.Games); !matched {
-		return
+// gameName decides whether a window is a game and what to call it:
+//  1. a config entry for exactly this class with a name, which is a
+//     deliberate choice and wins;
+//  2. the game's proper name from the source (Steam's name for the app);
+//  3. the window title, for config entries that ask for it;
+//  4. the config entry's name, or the class.
+func (t *Tracker) gameName(w source.Window) (string, bool) {
+	game, matched := utility.MatchGame(w.Class, t.cfg.Games)
+	if !matched && !w.Game {
+		return "", false
 	}
-	t.track(event.Address, event.Class, event.Title, now)
-	if err := t.Persist(now); err != nil {
-		t.warnf("failed to save state: %v", err)
-	}
-}
-
-func (t *Tracker) closeWindow(event hyprland.CloseWindowEvent, now time.Time) {
-	sess, exists := t.sessions[event.Address]
-	if !exists {
-		return
-	}
-	delete(t.sessions, event.Address)
-
-	t.finish(*sess, now, "Game ended", t.cfg.Settings.Notifications)
-	if err := t.Persist(now); err != nil {
-		t.warnf("failed to save state: %v", err)
-	}
-}
-
-// track begins a session for a matched game window.
-func (t *Tracker) track(address, class, title string, now time.Time) {
-	game, matched := utility.MatchGame(class, t.cfg.Games)
-	if !matched {
-		return
-	}
-
 	// Titles arrive from Hyprland with invisible Unicode characters baked in,
 	// so sanitize once at the boundary rather than at every display site.
-	title = utility.SanitizeTitle(title)
-
-	name := game.DisplayName()
-	if game.UseTitle && title != "" {
-		name = title
+	title := utility.SanitizeTitle(w.Title)
+	proper := utility.SanitizeTitle(w.Name)
+	switch {
+	case matched && !game.Prefix && game.Name != "":
+		return game.Name, true
+	case proper != "":
+		return proper, true
+	case matched && game.UseTitle && title != "":
+		return title, true
+	case matched:
+		return game.DisplayName(), true
+	case title != "":
+		return title, true
 	}
-
-	t.sessions[address] = &models.Session{
-		Address:   address,
-		Class:     class,
-		Title:     title,
-		GameName:  name,
-		StartTime: now,
-	}
-	t.logf("Game started: %s (class: %s, address: %s)", name, class, address)
+	return w.Class, true
 }
 
-// finish reports a completed session and logs it when it is long enough to keep.
-func (t *Tracker) finish(sess models.Session, end time.Time, label string, notifyUser bool) {
-	duration := end.Sub(sess.StartTime)
-	t.logf("%s: %s - Session: %s", label, sess.GameName, utility.FormatDurationExact(duration))
+// track begins a session for a game window, and reports whether it was one.
+func (t *Tracker) track(w source.Window, now time.Time) bool {
+	name, ok := t.gameName(w)
+	if !ok {
+		return false
+	}
+
+	t.sessions[w.ID] = &models.Session{
+		Address:   w.ID,
+		Class:     w.Class,
+		Title:     utility.SanitizeTitle(w.Title),
+		GameName:  name,
+		StartTime: wall(now),
+		Boot:      t.clock.Boot(),
+		// What the sleep counter reads now; whatever it gains before the
+		// session ends is time asleep.
+		AsleepAtStart: t.clock.Asleep(),
+	}
+	t.logf("Game started: %s (class: %s, id: %s)", name, w.Class, w.ID)
+	return true
+}
+
+// paused is how long the machine has slept since the session started.
+func (t *Tracker) paused(s models.Session) time.Duration {
+	return sleepclock.Slept(t.clock, s.Boot, s.AsleepAtStart, s.Paused)
+}
+
+// finish reports a completed session and logs it when the time played, which
+// leaves out the time asleep, is long enough to keep.
+func (t *Tracker) finish(sess models.Session, end time.Time, paused time.Duration, label string, notifyUser bool) {
+	end = wall(end)
+	sess.Paused = paused
+	played := sess.Played(end)
+	if paused > 0 {
+		t.logf("%s: %s - Session: %s (not counting %s asleep)", label, sess.GameName,
+			utility.FormatDurationExact(played), utility.FormatDurationExact(paused))
+	} else {
+		t.logf("%s: %s - Session: %s", label, sess.GameName, utility.FormatDurationExact(played))
+	}
 
 	minimum := time.Duration(t.cfg.Settings.MinSessionMins) * time.Minute
 	switch {
 	case !t.cfg.Settings.LogSessions:
-	case duration < minimum:
+	case played < minimum:
 		t.logf("Session too short to log (min: %d mins)", t.cfg.Settings.MinSessionMins)
 	default:
 		if err := session.Log(t.cfg.Settings.SessionsFile, sess, end); err != nil {
@@ -201,10 +254,21 @@ func (t *Tracker) finish(sess models.Session, end time.Time, label string, notif
 	}
 
 	if notifyUser {
-		if err := notify.GameEnded(sess.GameName, duration); err != nil && t.debug {
-			t.warnf("failed to send notification: %v", err)
-		}
+		// notify-send can stall without a notification daemon (Steam's Game
+		// Mode has none), so it never runs on the event loop.
+		go func() {
+			if err := notify.GameEnded(sess.GameName, played); err != nil && t.debug {
+				t.warnf("failed to send notification: %v", err)
+			}
+		}()
 	}
+}
+
+// wall drops a time's monotonic clock reading. Durations between times that
+// carry one leave out time asleep on Linux, but sleep is subtracted explicitly
+// (see sleepclock), so every duration here must be plain wall-clock time.
+func wall(t time.Time) time.Time {
+	return t.Round(0)
 }
 
 func (t *Tracker) logf(format string, args ...any) {

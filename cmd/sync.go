@@ -77,6 +77,7 @@ func newSyncer(logf func(format string, args ...any)) (*logbook.Syncer, error) {
 	return &logbook.Syncer{
 		Client:       logbook.NewClient(cfg.Logbook.URL, cfg.Logbook.Sheet, creds),
 		SessionsFile: cfg.Settings.SessionsFile,
+		Platform:     cfg.Logbook.Platform,
 		StateFile:    filepath.Join(stateDir, "logbook.json"),
 		LockFile:     filepath.Join(stateDir, "logbook.lock"),
 		Location:     time.Local,
