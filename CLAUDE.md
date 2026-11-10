@@ -62,9 +62,12 @@ attaches them to a GitHub release. The Deck installs from
   prefers an exact class over a prefix, wherever each sits in the list
 - **Sleep isn't play.** CLOCK_BOOTTIME minus CLOCK_MONOTONIC is the total time
   suspended since boot (`sleepclock`); a session stores it at its start plus
-  the boot ID, and its played time is wall-clock time less the growth. All
-  durations use wall-clock times (`Round(0)`): Go's monotonic readings already
-  leave out suspend on Linux, which would subtract sleep twice. The state file
+  the boot ID, and its played time is wall-clock time less the growth. The
+  two clocks aren't read at the same instant, so readings jitter by
+  microseconds while awake; growth under a second isn't sleep
+  (`sleepclock.Shortest`). All durations use wall-clock times (`Round(0)`):
+  Go's monotonic readings already leave out suspend on Linux, which would
+  subtract sleep twice. The state file
   keeps the sleep counted so far, so restarts lose none; a session from an
   earlier boot is always ended, never resumed. `duration_seconds` is time
   played, so it can be shorter than end minus start. The minimum session
@@ -133,9 +136,8 @@ relies on:
   Steam logs a process the moment it forks it, when it is still a copy of the
   Steam client: no launch command line, no `SteamAppUser`. v0.2.0 read the
   environment right then and never again, and it wrote the owner's first real
-  session (in Game Mode) off with "can't tell which Steam account". A fake
-  launch with that timing reproduces it; whether that was the whole cause on
-  the Deck is confirmed only once v0.2.1 records a Game Mode session. So:
+  session (in Game Mode) off with "can't tell which Steam account". v0.2.1
+  recorded the next one. So:
   - only a process that has become part of the launch is read (`inLaunch`:
     its command line carries `SteamLaunch AppId=<id>`);
   - until one names the account the game is `undecided` and nothing is
@@ -152,7 +154,11 @@ relies on:
   - the Opened event carries the time of the first line (`source.Event.At`),
     so a late decision doesn't shorten the session.
 - The pidfd watch moves onto the reaper once it's up (`watchReaper`); before
-  that it's on the first process Steam logged
+  that it's on the first process Steam logged. **The reaper's exit is how a
+  game normally ends here**: on the Deck it reaches gametrak a moment before
+  Steam writes `Remove … from running list` (same second), and that line then
+  finds the game already ended. So the exit says nothing about Steam having
+  crashed (v0.2.1 logged "exited without Steam logging it" on every quit)
 - **Test launches the way Steam does them**: write the "adding PID" line
   while the process is still something else, then let it become the wrapper
   (`launch_test.go`, and the fake-Deck script's processes that `sleep` before
@@ -169,10 +175,10 @@ relies on:
   "adding PID" lines per launch
 - Accounts switch offline, both ways: Steam ends the session and restarts
   (a restart marker in the game log) under the other account
-- **Not yet confirmed on the Deck:** that Game Mode launches carry
-  `SteamAppUser` (every checked launch was in Desktop Mode). The connection
-  log covers it if they don't; the daemon's log shows which one decided.
-  Remove this note once a Game Mode session has been recorded
+- Game Mode launches carry `SteamAppUser` too: v0.2.1 recorded the owner's
+  Game Mode session without falling back to the connection log (it logs when
+  it does). **Not yet seen on the Deck:** the other account's game being
+  skipped by the running service; remove this once it has been
 - `logs/connection_log.txt`: each client start writes `Client version:`, then
   `SetSteamID( [U:1:0] )`, then about 3 seconds later `SetSteamID( [U:1:<id>] )`,
   offline too; nearly every later line starts `[<state>, n, n] [U:1:<id>]`.

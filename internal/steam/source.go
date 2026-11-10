@@ -24,8 +24,9 @@ import (
 //   - the log is watched for changes (inotify), never polled;
 //   - games already running when gametrak starts are found from the process
 //     list, where Steam's reaper carries "SteamLaunch AppId=<id>";
-//   - each running game's reaper is also watched (pidfd), so a game still
-//     ends when it exits even if Steam crashes and never logs it;
+//   - each running game's reaper is also watched (pidfd): its exit ends the
+//     game, usually a moment ahead of Steam's line, and even if Steam crashes
+//     and never logs it;
 //   - with OnlyAccount, only games launched by that Steam account count. A
 //     game is reported once its launch processes say whose it is, which is a
 //     moment after Steam logs its first process (see judge).
@@ -223,8 +224,12 @@ func (s *Source) Run(ctx context.Context, events chan<- source.Event) error {
 			if !ok || game.gen != notice.gen {
 				continue // already ended, or an earlier run of the game
 			}
+			// This is the usual way a game ends, not only the backstop for a
+			// Steam crash: the reaper's exit gets here a moment before Steam
+			// writes its "Remove" line, which then finds the game ended.
 			s.stop(notice.appID)
-			if !s.ended(notice.appID, game, "%s exited without Steam logging it; ending its session", emit) {
+			s.debugf("%s's processes have exited", game.name)
+			if !s.ended(notice.appID, game, "", emit) {
 				return nil
 			}
 

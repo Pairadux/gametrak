@@ -243,8 +243,8 @@ func TestAnotherAccountsGameEndsQuietly(t *testing.T) {
 	ts.quiet(t)
 	kill(theirGame)
 	ts.quiet(t)
-	if log := ts.log(); strings.Contains(log, "exited without Steam logging it") {
-		t.Errorf("logged %q about someone else's game ending", log)
+	if log := ts.log(); log != "Not recording Mini Motorways: it's being played on another Steam account, 222222222 (Them)" {
+		t.Errorf("logged %q, want only the note that it's someone else's", log)
 	}
 
 	// Then mine starts, and counts.
