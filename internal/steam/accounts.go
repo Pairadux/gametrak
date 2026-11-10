@@ -124,3 +124,30 @@ func launchUser(procDir string, pid int) (string, bool) {
 	}
 	return "", false
 }
+
+// inLaunch reports whether a process has become part of Steam's launch of
+// appID: its command line carries "SteamLaunch AppId=<id>", as the launch
+// wrapper's and the reaper's do. Steam logs a process the moment it's forked,
+// and until it runs its own program it still shows the command line and the
+// environment of the process that forked it, which say nothing about the game.
+func inLaunch(procDir string, pid int, appID uint64) bool {
+	args := processArgs(procDir, pid)
+	want := "AppId=" + strconv.FormatUint(appID, 10)
+	for i, arg := range args {
+		// Usually separate arguments; a wrapper may also carry the whole
+		// command as one.
+		if arg == "SteamLaunch" && i+1 < len(args) && args[i+1] == want {
+			return true
+		}
+		if rest, ok := cutAfter(arg, "SteamLaunch "+want); ok && (rest == "" || rest[0] == ' ') {
+			return true
+		}
+	}
+	return false
+}
+
+// cutAfter returns what follows the first sep in s.
+func cutAfter(s, sep string) (string, bool) {
+	_, after, found := strings.Cut(s, sep)
+	return after, found
+}

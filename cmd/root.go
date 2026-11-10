@@ -192,7 +192,11 @@ func runMonitor() error {
 			return shutdown()
 
 		case event := <-events:
-			track.Apply(event, time.Now())
+			now := time.Now()
+			if !event.At.IsZero() && event.At.Before(now) {
+				now = event.At // the game started a moment before it was reported
+			}
+			track.Apply(event, now)
 		}
 	}
 }

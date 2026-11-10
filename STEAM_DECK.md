@@ -148,11 +148,11 @@ gametrak history                                   # recent sessions
 journalctl --user -u gametrak -n 30 --no-pager     # what the background service logged
 ```
 
-A finished game shows in the log as `Game ended: <game>` followed by
-`Logbook: uploaded 1 session`. Someone else's game shows as `Not recording
-<game>: it's being played on another Steam account`. A line starting
-`Warning: not recording` means gametrak couldn't tell whose game it was, so it
-left it out to be safe; log that one with the Log Game shortcut.
+A finished game shows in the log as `Game started: <game>`, then `Game ended:
+<game>`, then `Logbook: uploaded 1 session`. Someone else's game shows as `Not
+recording <game>: …another Steam account…`. A line starting `Warning: not
+recording` means gametrak couldn't tell whose game it was, so it left it out
+to be safe; log that one with the Log Game shortcut.
 
 ## Updating
 
