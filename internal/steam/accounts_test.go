@@ -100,12 +100,16 @@ func TestLaunchUser(t *testing.T) {
 	environ(1, "HOME=/home/deck", "SteamAppUser=me_login", "SteamUser=other", "SteamAppId=1127500")
 	environ(2, "SteamUser=me_login")
 	environ(3, "HOME=/home/deck", "SteamAppUser=", "SteamAppId=1127500")
+	// The Deck's reaper: SteamAppUser set, SteamUser empty.
+	environ(5, "SteamAppId=1127500", "SteamAppUser=me_login", "SteamUser=")
+	// The process between the launch wrapper and the reaper: neither.
+	environ(6, "STEAMSCRIPT=/usr/bin/steam", "SteamUser=")
 
 	for _, tc := range []struct {
 		pid  int
 		want string
 		ok   bool
-	}{{1, "me_login", true}, {2, "me_login", true}, {3, "", false}, {4, "", false}} {
+	}{{1, "me_login", true}, {2, "me_login", true}, {3, "", false}, {4, "", false}, {5, "me_login", true}, {6, "", false}} {
 		if got, ok := launchUser(proc, tc.pid); got != tc.want || ok != tc.ok {
 			t.Errorf("launchUser(%d) = %q, %v; want %q, %v", tc.pid, got, ok, tc.want, tc.ok)
 		}
@@ -113,13 +117,14 @@ func TestLaunchUser(t *testing.T) {
 }
 
 // fakeGame puts a stand-in for a game's reaper in a fake process list,
-// launched by login ("" for no account variables).
+// launched by login ("" for no account variables). Its environment is like
+// the reaper's on the Deck: SteamAppUser set, SteamUser empty.
 func fakeGame(t *testing.T, proc string, pid int, appID uint64, login string) {
 	t.Helper()
 	writeFile(t, filepath.Join(proc, fmt.Sprint(pid), "cmdline"), fmt.Sprintf("reaper\x00SteamLaunch\x00AppId=%d\x00--\x00game\x00", appID))
-	env := "HOME=/home/deck\x00SteamAppId=" + fmt.Sprint(appID) + "\x00"
+	env := "HOME=/home/deck\x00SteamAppId=" + fmt.Sprint(appID) + "\x00SteamUser=\x00"
 	if login != "" {
-		env += "SteamAppUser=" + login + "\x00SteamUser=" + login + "\x00"
+		env += "SteamAppUser=" + login + "\x00"
 	}
 	writeFile(t, filepath.Join(proc, fmt.Sprint(pid), "environ"), env)
 }
@@ -279,5 +284,22 @@ func TestASteamRestartForgetsAnotherAccountsGameQuietly(t *testing.T) {
 	ts.write(t, fmt.Sprintf("[2026-11-10 08:00:00] AppID 294100 adding PID %d as a tracked process", fakePID+1))
 	if got := ts.next(t); got.Kind != source.Opened || got.Window.Name != "RimWorld" {
 		t.Errorf("event = %+v, want my RimWorld opened", got)
+	}
+}
+
+func TestTheAccountComesFromWhicheverProcessHasIt(t *testing.T) {
+	root, _ := fakeSteam(t)
+	writeFile(t, LoginUsersPath(root), loginUsers)
+	proc := t.TempDir()
+	// On the Deck, a process between the launch wrapper and the reaper has a
+	// launch command line but no SteamAppUser; it comes first here.
+	writeFile(t, filepath.Join(proc, fmt.Sprint(fakePID), "cmdline"), "reaper\x00SteamLaunch\x00AppId=1127500\x00--\x00game\x00")
+	writeFile(t, filepath.Join(proc, fmt.Sprint(fakePID), "environ"), "STEAMSCRIPT=/usr/bin/steam\x00SteamUser=\x00")
+	fakeGame(t, proc, fakePID+1, 1127500, "me_login")
+
+	ts := openTestSource(t, root, proc)
+	ts.OnlyAccount(mine)
+	if windows, _ := ts.Snapshot(); len(windows) != 1 || windows[0] != motorways {
+		t.Errorf("Snapshot = %+v, want my Mini Motorways; logged %q", windows, ts.log())
 	}
 }

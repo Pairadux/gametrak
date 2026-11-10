@@ -95,12 +95,17 @@ func (a Account) String() string {
 }
 
 // userVariables are the variables in a game's environment that Steam fills
-// with the login name of the account that launched it.
+// with the login name of the account that launched it. On the Deck,
+// SteamAppUser is on the launch wrapper, the reaper and the game's processes,
+// online and offline, for Proton and native games alike. SteamUser names the
+// account only on the outermost wrapper and is empty below it.
 var userVariables = []string{"SteamAppUser", "SteamUser"}
 
 // launchUser returns the login name of the Steam account that launched a
 // game, from the environment Steam gave the game's process. Steam sets it
-// itself, so it's there offline too.
+// itself at launch, so it's there offline too. A process between the wrapper
+// and the reaper has neither variable, so callers try each of the game's
+// processes.
 func launchUser(procDir string, pid int) (string, bool) {
 	data, err := os.ReadFile(filepath.Join(procDir, strconv.Itoa(pid), "environ"))
 	if err != nil {
