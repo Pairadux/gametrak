@@ -6,9 +6,15 @@ Mode and Desktop Mode, and each session is uploaded to Logbook as soon as the
 game closes, marked as played on the Steam Deck.
 
 - **What counts:** every Steam game installed on the Deck, on internal storage
-  or the SD card. Non-Steam shortcuts (Discord, emulators) and Remote Play
-  streams are left out; log those with the Log Game shortcut.
+  or the SD card, played on your Steam account. Non-Steam shortcuts (Discord,
+  emulators) and Remote Play streams are left out; log those with the Log Game
+  shortcut.
+- **Other people's accounts:** games someone else plays on the Deck, signed in
+  to their own Steam account, are never recorded.
 - **Sleep:** time the Deck spends asleep with a game open isn't counted.
+- **Offline:** games played without a connection are recorded as usual, and
+  uploaded at the next sync: when a game ends while online, when gametrak next
+  starts, or when you run `gametrak sync`.
 - **How it watches:** it reacts to Steam writing its log, and to the game's
   processes exiting; nothing runs on a timer.
 
@@ -45,12 +51,19 @@ settings:
   log_sessions: true
   min_session_mins: 5
   source: steam
+  steam_account: 123456789
 logbook:
   enabled: true
   platform: Steam Deck
 EOF
 ```
 
+- `steam_account`: replace `123456789` with **your** Steam account ID, the
+  number in `[U:1:…]` (your 17-digit Steam ID, `7656…`, works too). Only games
+  played on that account are recorded. If you're not sure of it, leave the
+  line out and run `gametrak` once (Ctrl+C stops it): its first warning lists
+  each account that has signed in here, with its profile name. If you're the
+  only one who uses Steam on the Deck, you can leave the line out.
 - `min_session_mins: 5`: sessions shorter than 5 minutes of play aren't kept.
 - `notifications: false`: Game Mode has nowhere to show desktop notifications.
 - `platform: Steam Deck`: spelled exactly like that, so the site accepts it.
@@ -80,6 +93,10 @@ It should say `Already in step with …` or list sessions it pulled from the sit
 ID or secret is wrong: run the four lines above again.
 
 ## 4. Import your past Deck sessions (optional)
+
+**Skip this if anyone else plays on the Deck with their own Steam account.**
+Steam's log doesn't say which account played each game, so `import-steam`
+refuses to run once a second account has signed in.
 
 Steam's log goes back months. Preview what it found first; nothing changes:
 
@@ -132,7 +149,10 @@ journalctl --user -u gametrak -n 30 --no-pager     # what the background service
 ```
 
 A finished game shows in the log as `Game ended: <game>` followed by
-`Logbook: uploaded 1 session`.
+`Logbook: uploaded 1 session`. Someone else's game shows as `Not recording
+<game>: it's being played on another Steam account`. A line starting
+`Warning: not recording` means gametrak couldn't tell whose game it was, so it
+left it out to be safe; log that one with the Log Game shortcut.
 
 ## Updating
 
@@ -158,11 +178,11 @@ a version tag builds one (`.github/workflows/release.yml` runs the tests, builds
 `gametrak-linux-amd64` and `gametrak-linux-arm64`, and attaches them):
 
 ```sh
-git tag v1.0.0 && git push origin v1.0.0
+git tag v0.2.0 && git push origin v0.2.0
 ```
 
 Or, from the website: **Releases → Draft a new release**, type a new tag such
-as `v1.0.0`, and **Publish**. The binaries appear on the release a minute or
+as `v0.2.0`, and **Publish**. The binaries appear on the release a minute or
 two later.
 
 Without a release, build it on the laptop and copy it over (a USB stick works):
