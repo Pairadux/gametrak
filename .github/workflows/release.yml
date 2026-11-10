@@ -1,0 +1,44 @@
+# Builds gametrak for Linux (x86-64 for the Steam Deck, ARM64) and attaches the
+# binaries to a GitHub release, so a machine can install it with one download:
+#   https://github.com/Pairadux/gametrak/releases/latest/download/gametrak-linux-amd64
+# It runs when a version tag is pushed (git tag v1.0.0 && git push origin v1.0.0),
+# or when a release is published from the website with a new tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags="-s -w -X github.com/austincgause/gametrak/cmd.version=${GITHUB_REF_NAME}" \
+              -o "dist/gametrak-linux-$arch" .
+          done
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
