@@ -269,7 +269,7 @@ func (s *Source) counts(name string, pids []int) bool {
 		}
 	}
 	if login == "" {
-		s.logf("Warning: not recording %s: can't tell which Steam account is playing it (Steam's account variables aren't in its processes' environment)", name)
+		s.logf("Warning: not recording %s: can't tell which Steam account is playing it (no SteamAppUser in its processes' environment)", name)
 		return false
 	}
 	accounts, err := Accounts(s.root)
