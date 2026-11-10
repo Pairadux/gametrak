@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Account is a Steam account that has signed in to Steam on this machine.
@@ -85,13 +86,35 @@ func Accounts(root string) ([]Account, error) {
 	return accounts, nil
 }
 
-// String names an account for the daemon's log without its login name,
-// which is half of what signs in to it.
+// String names an account for the daemon's log: its ID, and its profile name
+// unless that would give away its login name, which is half of what signs in
+// to the account. People often use one name for both.
 func (a Account) String() string {
-	if a.Persona == "" {
+	if a.Persona == "" || resembles(a.Persona, a.Login) {
 		return fmt.Sprintf("%d", a.ID)
 	}
 	return fmt.Sprintf("%d (%s)", a.ID, a.Persona)
+}
+
+// resembles reports whether a profile name and a login name are the same
+// name, or one sits inside the other, going by their letters and digits
+// alone and ignoring case.
+func resembles(persona, login string) bool {
+	p, l := plain(persona), plain(login)
+	if p == "" || l == "" {
+		return false // nothing to compare: symbols only, or no login known
+	}
+	return strings.Contains(l, p) || strings.Contains(p, l)
+}
+
+// plain keeps a name's letters and digits, in lower case.
+func plain(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, name)
 }
 
 // userVariables are the variables in a game's environment that Steam fills

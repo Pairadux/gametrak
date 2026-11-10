@@ -130,8 +130,10 @@ relies on:
   `SteamUser`) is that account's `AccountName` in `config/loginusers.vdf`
   (matched ignoring case). A skipped game is still followed (`verdict`
   `skipped`), silently, so its later lines and its end are recognized. The
-  daemon's log never prints login names, only IDs and profile names
-  (`Account.String`)
+  daemon's log never prints login names: an account is named by its ID, plus
+  its profile name only when that doesn't resemble the login name
+  (`Account.String`). On the Deck the other account's profile name **is** her
+  login name, and v0.2.2 printed it
 - **A game's account can't be read at its first log line** (`Source.judge`).
   Steam logs a process the moment it forks it, when it is still a copy of the
   Steam client: no launch command line, no `SteamAppUser`. v0.2.0 read the
@@ -176,9 +178,9 @@ relies on:
 - Accounts switch offline, both ways: Steam ends the session and restarts
   (a restart marker in the game log) under the other account
 - Game Mode launches carry `SteamAppUser` too: v0.2.1 recorded the owner's
-  Game Mode session without falling back to the connection log (it logs when
-  it does). **Not yet seen on the Deck:** the other account's game being
-  skipped by the running service; remove this once it has been
+  Game Mode session, and v0.2.2 skipped the other account's ("Not recording …
+  another Steam account") the second it started, neither falling back to the
+  connection log (the daemon logs when it does)
 - `logs/connection_log.txt`: each client start writes `Client version:`, then
   `SetSteamID( [U:1:0] )`, then about 3 seconds later `SetSteamID( [U:1:<id>] )`,
   offline too; nearly every later line starts `[<state>, n, n] [U:1:<id>]`.
@@ -194,6 +196,8 @@ relies on:
   `steam_account` isn't set, or when it's set to one that never has.
   `import-steam` refuses to run where more than one account has signed in,
   since the game log doesn't say whose session was whose
+- Updating the binary under a running service: `curl -o` onto it fails with
+  `Text file busy`; download next to it and `mv` it into place (STEAM_DECK.md)
 - Deck config: `source: steam`, `steam_account: <the owner's>`,
   `min_session_mins: 5`, `notifications: false` (Game Mode has no
   notification daemon; notify-send also runs off the event loop with a

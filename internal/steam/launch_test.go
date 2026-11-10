@@ -158,7 +158,7 @@ func TestAnotherAccountsGameIsSkippedOnceItsLaunchShowsTheAccount(t *testing.T) 
 	ts.write(t, adding(1127500, supervisorPID), adding(1127500, reaperPID), adding(1127500, childPID), removed(1127500))
 	ts.quiet(t)
 
-	if log := ts.log(); log != "Not recording Mini Motorways: it's being played on another Steam account, 222222222 (Them)" {
+	if log := ts.log(); log != "Not recording Mini Motorways: it's being played on another Steam account, 222222222 (Player Two)" {
 		t.Errorf("logged %q, want one note that it's someone else's", log)
 	}
 }
@@ -238,7 +238,7 @@ func TestTheConnectionLogDecidesWhenNoProcessNamesTheAccount(t *testing.T) {
 		ts.run(t)
 		launch(t, ts, proc)
 		ts.quiet(t)
-		want := "Not recording Mini Motorways: Steam's connection log says another Steam account is signed in, 222222222 (Them)"
+		want := "Not recording Mini Motorways: Steam's connection log says another Steam account is signed in, 222222222 (Player Two)"
 		if log := ts.log(); log != want {
 			t.Errorf("logged %q, want %q", log, want)
 		}

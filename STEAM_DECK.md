@@ -62,8 +62,9 @@ EOF
   number in `[U:1:…]` (your 17-digit Steam ID, `7656…`, works too). Only games
   played on that account are recorded. If you're not sure of it, leave the
   line out and run `gametrak` once (Ctrl+C stops it): its first warning lists
-  each account that has signed in here, with its profile name. If you're the
-  only one who uses Steam on the Deck, you can leave the line out.
+  each account that has signed in here, with its profile name (left out when
+  it's the same as the login name, which gametrak never prints). If you're
+  the only one who uses Steam on the Deck, you can leave the line out.
 - `min_session_mins: 5`: sessions shorter than 5 minutes of play aren't kept.
 - `notifications: false`: Game Mode has nowhere to show desktop notifications.
 - `platform: Steam Deck`: spelled exactly like that, so the site accepts it.
@@ -157,10 +158,16 @@ to be safe; log that one with the Log Game shortcut.
 ## Updating
 
 ```sh
-curl -fL -o ~/.local/bin/gametrak https://github.com/Pairadux/gametrak/releases/latest/download/gametrak-linux-amd64
+curl -fL -o ~/.local/bin/gametrak.new https://github.com/Pairadux/gametrak/releases/latest/download/gametrak-linux-amd64
+chmod +x ~/.local/bin/gametrak.new
+mv ~/.local/bin/gametrak.new ~/.local/bin/gametrak
 systemctl --user restart gametrak
 gametrak --version
 ```
+
+The download goes to a second file first: Linux won't let `curl` write over a
+program while it's running (`Text file busy`), but moving the new file into
+place works. A game that's open when you restart keeps its session.
 
 ## Removing it
 
