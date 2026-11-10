@@ -167,8 +167,8 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
   that would delete every linked session once there are 3 or more (an empty
   sheet, a reset database, another site). Each rewrite keeps a `.bak` copy
 - Durations are whole minutes in Logbook, at least 1 (`logbook.Minutes`). A pull
-  keeps a session's exact seconds unless the site changed the minutes. Every
-  upload is platform `PC`
+  keeps a session's exact seconds unless the site changed the minutes. Uploads
+  name the platform from `logbook.platform` (below)
 - A session the site rejects (400) is remembered in `logbook.json` and skipped
   by automatic syncs, so it isn't resent after every game; `gametrak sync` retries
 - The daemon logs each new sync failure once, and sends a notification only for
