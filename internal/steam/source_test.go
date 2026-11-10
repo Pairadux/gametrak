@@ -92,6 +92,7 @@ type testSource struct {
 	*Source
 	root   string
 	events chan source.Event
+	at     time.Time // when the last event from next says its game started
 	mu     sync.Mutex
 	logged []string
 }
@@ -143,6 +144,8 @@ func (ts *testSource) next(t *testing.T) source.Event {
 	t.Helper()
 	select {
 	case e := <-ts.events:
+		// Kept aside, so events compare by what happened alone.
+		ts.at, e.At = e.At, time.Time{}
 		return e
 	case <-time.After(3 * time.Second):
 		t.Fatal("no event arrived")

@@ -125,28 +125,65 @@ relies on:
   ID, `[U:1:…]` or SteamID64; `steam.ParseAccount`), a game counts only when
   the login name in its processes' environment (`SteamAppUser`, else
   `SteamUser`) is that account's `AccountName` in `config/loginusers.vdf`
-  (matched ignoring case). Anything unclear (no variable, process gone, file
-  unreadable, an unknown login) skips the game with a warning: fail closed.
-  A skipped game is still followed (`runningGame.skipped`), silently, so its
-  later lines and its end are recognized. The daemon's log never prints login
-  names, only IDs and profile names (`Account.String`)
-- Tested on the Deck (November 2026), online and offline, a Proton game and a
-  native one, both accounts: `SteamAppUser` named the right account on the
+  (matched ignoring case). A skipped game is still followed (`verdict`
+  `skipped`), silently, so its later lines and its end are recognized. The
+  daemon's log never prints login names, only IDs and profile names
+  (`Account.String`)
+- **A game's account can't be read at its first log line** (`Source.judge`).
+  Steam logs a process the moment it forks it, when it is still a copy of the
+  Steam client: no launch command line, no `SteamAppUser`. v0.2.0 read the
+  environment right then and never again, and it wrote the owner's first real
+  session (in Game Mode) off with "can't tell which Steam account". A fake
+  launch with that timing reproduces it; whether that was the whole cause on
+  the Deck is confirmed only once v0.2.1 records a Game Mode session. So:
+  - only a process that has become part of the launch is read (`inLaunch`:
+    its command line carries `SteamLaunch AppId=<id>`);
+  - until one names the account the game is `undecided` and nothing is
+    reported. Each later "adding PID" line of the app looks again, which
+    settles it within about a second;
+  - once the reaper is up and still no process names an account, Steam's
+    connection log gives a second opinion (`signedIn`: the newest line with
+    an account since the client's last `Client version:` line, unless that
+    line is `Log session ended`). The daemon logs when it used it;
+  - if no later line comes, a one-shot timer (`settleAfter`, 5s) looks once
+    more and decides with what's there. That's one look, not polling;
+  - when neither source tells, the game is skipped with a warning (fail
+    closed), and a game that ends undecided is never recorded;
+  - the Opened event carries the time of the first line (`source.Event.At`),
+    so a late decision doesn't shorten the session.
+- The pidfd watch moves onto the reaper once it's up (`watchReaper`); before
+  that it's on the first process Steam logged
+- **Test launches the way Steam does them**: write the "adding PID" line
+  while the process is still something else, then let it become the wrapper
+  (`launch_test.go`, and the fake-Deck script's processes that `sleep` before
+  they `exec`). A stand-in that already is the reaper when its line is written
+  hides exactly the bug above
+- Tested on the Deck in Desktop Mode (November 2026), online and offline, a
+  Proton game and a native one, both accounts, each read about 30 seconds into
+  the game: `SteamAppUser` named the right account on the
   launch wrapper (the first "adding PID", comm `steam-runtime-l…`), the reaper
   and the reaper's children. `SteamUser` is set only on the wrapper and empty
   below it. The process between the wrapper and the reaper (comm
   `steam-runtime-s…`) has a launch command line but neither variable, which
-  is why `counts` tries each of the game's processes. An app logs 12–20
+  is why `judge` tries each of the game's processes. An app logs 12–20
   "adding PID" lines per launch
 - Accounts switch offline, both ways: Steam ends the session and restarts
   (a restart marker in the game log) under the other account
-- Why not the other signals: `logs/connection_log.txt` never writes
-  `Logged On` offline (sign-ins stop at `LogOn() called; not connected yet`),
-  though `SetSteamID` and the line prefix still name the account;
-  `loginusers.vdf` has no `MostRecent` on the Deck and its timestamps lag a
-  switch by ~20s; `registry.vdf` has no `ActiveProcess`, and `AutoLoginUser`
-  is the next automatic sign-in, not who is playing (though it followed every
-  switch in the test); `userdata/<id>` folders don't change when a game starts
+- **Not yet confirmed on the Deck:** that Game Mode launches carry
+  `SteamAppUser` (every checked launch was in Desktop Mode). The connection
+  log covers it if they don't; the daemon's log shows which one decided.
+  Remove this note once a Game Mode session has been recorded
+- `logs/connection_log.txt`: each client start writes `Client version:`, then
+  `SetSteamID( [U:1:0] )`, then about 3 seconds later `SetSteamID( [U:1:<id>] )`,
+  offline too; nearly every later line starts `[<state>, n, n] [U:1:<id>]`.
+  Offline the state stays `Logged Off` (sign-ins stop at `LogOn() called; not
+  connected yet`), so never wait for `Logged On`. A shutdown or account switch
+  writes `Log session ended`. The file is replaced at about 4 MB
+- Signals that don't work: `loginusers.vdf` has no `MostRecent` on the Deck
+  and its timestamps lag a switch by ~20s; `registry.vdf` has no
+  `ActiveProcess`, and `AutoLoginUser` is the next automatic sign-in, not who
+  is playing (though it followed every switch in the test); `userdata/<id>`
+  folders don't change when a game starts
 - At startup the daemon warns when several accounts have signed in and
   `steam_account` isn't set, or when it's set to one that never has.
   `import-steam` refuses to run where more than one account has signed in,

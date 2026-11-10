@@ -3,7 +3,10 @@
 // Steam Deck.
 package source
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Window is something that may be a game: a Hyprland window, or a game the
 // Steam client reports as running.
@@ -33,6 +36,10 @@ const (
 type Event struct {
 	Kind   Kind
 	Window Window
+	// At is when the window opened, for a source that reports it a moment
+	// later (the Steam source waits to learn whose game it is). Zero means
+	// as the event arrives.
+	At time.Time
 }
 
 // Source reports games starting and stopping.
