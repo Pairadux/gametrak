@@ -1,6 +1,8 @@
 # Gametrak
 
-A CLI tool that tracks game time on Linux via Hyprland window events.
+A CLI tool that tracks game time on Linux: via Hyprland window events on the
+laptop, or via the Steam client's game log on the Steam Deck (see
+[STEAM_DECK.md](STEAM_DECK.md) for the owner's setup steps there).
 
 ## Build & Run
 
@@ -12,22 +14,32 @@ gametrak status          # what is being tracked right now
 gametrak history today   # example query
 gametrak stats week      # example stats
 gametrak sync            # sync with Logbook now (setup steps: gametrak sync --help)
+gametrak import-steam --dry-run   # Steam Deck: preview past sessions from Steam's log
+gametrak --version       # "dev" unless built by the release workflow
 ```
+
+Releases: pushing a `v*` tag runs `.github/workflows/release.yml`, which tests,
+builds static `gametrak-linux-amd64` (the Deck) and `gametrak-linux-arm64`, and
+attaches them to a GitHub release. The Deck installs from
+`releases/latest/download/gametrak-linux-amd64` (the repo is public).
 
 ## Architecture
 
 - `cmd/` - Cobra CLI commands; thin wrappers that wire flags to internal packages
 - `internal/config/` - Config loading, game defaults, add/remove
-- `internal/hyprland/` - IPC sockets: event stream (socket2) and requests (socket)
+- `internal/hyprland/` - IPC sockets: event stream (socket2) and requests (socket), and the Hyprland source
 - `internal/lockfile/` - flock-based locks shared by the daemon and other commands
 - `internal/logbook/` - Logbook API client, merging the sheet into the log, the sync cycle
 - `internal/models/` - Session/SessionLog/Config data structures
 - `internal/output/` - Aligned text tables and proportional bars
 - `internal/query/` - Filter parsing and session selection
 - `internal/session/` - JSONL session file I/O
+- `internal/sleepclock/` - Time asleep since boot, from the kernel's clocks
+- `internal/source/` - What the tracker takes: windows opening and closing, from any source
 - `internal/state/` - Active session persistence for restart recovery
 - `internal/stats/` - Totals, streaks, and time buckets
-- `internal/tracker/` - Turns window events into recorded sessions
+- `internal/steam/` - Steam's files: installed games and names (VDF), the game log, the Steam source, history import
+- `internal/tracker/` - Turns windows opening and closing into recorded sessions
 - `internal/utility/` - Time formatting, title sanitization, game matching
 
 ### Key patterns
@@ -38,10 +50,29 @@ gametrak sync            # sync with Logbook now (setup steps: gametrak sync --h
 - Sessions are filtered by **start time only** - a session belongs to the day it
   started on, and to the hour it started in
 - `internal/tracker` holds no package state and takes `now` as a parameter, so
-  the recovery paths are testable without Hyprland or a real clock
+  the recovery paths are testable without Hyprland or a real clock. It takes
+  `source.Window`s and `source.Event`s; `cmd/root.go` picks the source
+  (`settings.source`: `auto` is Hyprland when `HYPRLAND_INSTANCE_SIGNATURE`
+  is set, otherwise Steam) and feeds its events to `Tracker.Apply`
+- **Naming** (`Tracker.gameName`): a config entry for exactly the window's
+  class with a name wins; then the source's proper name (Steam's name for the
+  app, which the Hyprland source looks up for `steam_app_<id>` windows when
+  Steam is installed, so a game is named the same on the laptop and the Deck);
+  then the title for `use_title` entries; then the entry's name. `MatchGame`
+  prefers an exact class over a prefix, wherever each sits in the list
+- **Sleep isn't play.** CLOCK_BOOTTIME minus CLOCK_MONOTONIC is the total time
+  suspended since boot (`sleepclock`); a session stores it at its start plus
+  the boot ID, and its played time is wall-clock time less the growth. All
+  durations use wall-clock times (`Round(0)`): Go's monotonic readings already
+  leave out suspend on Linux, which would subtract sleep twice. The state file
+  keeps the sleep counted so far, so restarts lose none; a session from an
+  earlier boot is always ended, never resumed. `duration_seconds` is time
+  played, so it can be shorter than end minus start. The minimum session
+  length compares against time played
 - Shutdown **does not** record active sessions. Whether a game actually stopped
-  is only knowable at the next startup, when Hyprland's window list says whether
-  it is still open; recording at shutdown would split one session in two
+  is only knowable at the next startup, when the source's snapshot (Hyprland's
+  window list, or the Steam games running) says whether it is still open;
+  recording at shutdown would split one session in two
 - Hyprland reports window addresses with an `0x` prefix over the request socket
   but without one over the event socket; `hyprland.NormalizeAddress` reconciles them
 - `output.Table` drops columns that are empty in every row, so callers emit
@@ -54,6 +85,56 @@ gametrak sync            # sync with Logbook now (setup steps: gametrak sync --h
 - The session log is shared with `internal/logbook`: appends (`session.Log`) and
   rewrites (`session.Update`, temp file + rename, previous copy kept as `.bak`,
   unreadable lines preserved) both hold `sessions.jsonl.lock`
+
+### The Steam source (Steam Deck)
+
+Facts from auditing the owner's Deck (SteamOS, November 2026), which the code
+relies on:
+
+- The log is `~/.local/share/Steam/logs/gameprocess_log.txt` (`~/.steam/steam`
+  links to the same folder). Steam has appended to the same file since
+  August 2025, across client restarts and Game Mode/Desktop Mode switches; no
+  `.previous` copy. Lines end in `\r\n`, and a few spots hold runs of NUL bytes
+  that run into the next line
+- `[2026-11-10 06:25:31] AppID 1127500 adding PID 18019 as a tracked process
+  "…reaper SteamLaunch AppId=1127500 -- …"` marks a start (an app logs several
+  PIDs; the first counts). `AppID … no longer tracking PID …, exit code 0`
+  then `Remove 1127500 from running list` mark the stop, within a second of
+  quitting, even after a force close. Timestamps are local time, no offset
+- Each client start writes blank lines, `Client version: …` and
+  `SSGL: UI mode (0->N)`. Steam writes nothing when it exits
+- Non-Steam shortcuts have 64-bit IDs and never get a `Remove` line; Remote
+  Play shows as its own app (202355). Neither has an appmanifest, so "only
+  installed games" (`Library.Name`) leaves both out, as the owner chose
+- `RunningAppID` in registry.vdf stays 0 on the Deck: useless
+- Steam runs every game under `reaper SteamLaunch AppId=<id> -- …`, which lives
+  until the whole game exits. The source finds running games at startup from
+  `/proc` (one read), and watches each game's reaper with a pidfd, so a game
+  still ends if Steam crashes and never logs it (`exitwatch.go`)
+- The log is followed with fsnotify from its end at startup (`follower.go`);
+  a replaced or truncated file is read from the top. Nothing polls
+- Library folders (internal and the SD card) come from `libraryfolders.vdf`
+  (`config/` on new clients, `steamapps/` on old); names from
+  `appmanifest_<id>.acf`. A missed lookup rereads the manifests, at most every
+  10 seconds
+- The Deck's user services run while the deck user is logged in, which is
+  always (linger is off, and doesn't need to be on). A mode switch may restart
+  gametrak; startup recovery covers it
+- Deck config: `source: steam`, `min_session_mins: 5`, `notifications: false`
+  (Game Mode has no notification daemon; notify-send also runs off the event
+  loop with a timeout), `logbook.platform: Steam Deck`
+- `import-steam` rebuilds history from the log with the same rules
+  (`steam.History`), skipping sessions with no clear end, and names
+  uninstalled games after their last non-tool `steamapps/common/<folder>`.
+  Entries are numbered oldest first over sessions above the minimum, so
+  numbers stay valid as play is added. `--ignore-entry` choices are
+  remembered in `steam-import.json` in the state folder; "already recorded"
+  means a session of the same app ID or name overlaps it. It refuses to run
+  where gametrak watches Hyprland, whose log already has those sessions
+- Testing without a Deck: a fake Steam folder (manifests, libraryfolders.vdf,
+  a log with `\r\n` lines), and real stand-in reapers:
+  `setsid sh -c 'sleep 600; :' reaper SteamLaunch AppId=1127500 -- game`
+  (the `; :` keeps sh from exec'ing sleep, which would lose the arguments)
 
 ### Logbook sync
 
@@ -95,6 +176,8 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
 - Testing against a local Logbook (`pnpm dev` in Logs-Site, which skips Access):
   point `logbook.url` at `http://localhost:5173` in a separate config and data
   directory. Never point a test at the production site
+- Uploads use `logbook.platform` (default `PC`; the Deck sets `Steam Deck`).
+  Sessions the other device uploaded arrive as site sessions with no class
 - `go.mod` asks for Go 1.25.6. Where that toolchain can't be downloaded, check
   with an older local Go via a scratch copy of go.mod:
   `GOTOOLCHAIN=local go test -modfile=/tmp/go124.mod ./...` (with `go 1.24`
@@ -102,5 +185,6 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
 
 ## Pending work
 
-- [ ] Idle detection (a paused game still counts as played time)
+- [ ] Idle detection (a game left open while the machine is awake still counts;
+      time asleep is already left out)
 - [ ] Playtime goals or limits with warning notifications
