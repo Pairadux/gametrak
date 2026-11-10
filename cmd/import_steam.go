@@ -38,6 +38,10 @@ play only ever adds numbers at the end, so the numbers from the preview stay
 valid. Ignored entries are remembered, so a later import leaves them out too;
 to bring them back, delete steam-import.json in gametrak's state folder.
 
+Steam's log doesn't say which account played, so import-steam refuses to run
+where more than one Steam account has signed in: it can't tell your sessions
+from anyone else's.
+
 It uses the same rules as live tracking: Steam games only (no non-Steam
 shortcuts, no Remote Play), and only sessions at least min_session_mins long.
 A session already in your log, recorded live or imported before, is skipped,
@@ -60,6 +64,9 @@ watches Hyprland, those sessions are already in your log.`,
 		}
 		root, err := steam.FindRoot(cfg.Settings.SteamDir)
 		if err != nil {
+			return err
+		}
+		if err := oneAccount(root); err != nil {
 			return err
 		}
 		logPath := steam.GameLogPath(root)
@@ -145,6 +152,24 @@ watches Hyprland, those sessions are already in your log.`,
 		}
 		return nil
 	},
+}
+
+// oneAccount refuses an import where more than one Steam account has signed
+// in, since Steam's game log doesn't say whose game each session was.
+func oneAccount(root string) error {
+	accounts, err := steam.Accounts(root)
+	if err != nil {
+		if strings.TrimSpace(cfg.Settings.SteamAccount) == "" {
+			return nil // only one person uses this Steam, as far as gametrak knows
+		}
+		return fmt.Errorf("can't check whose games Steam's log holds: %w", err)
+	}
+	if len(accounts) <= 1 {
+		return nil
+	}
+	return fmt.Errorf("%d Steam accounts have signed in here, and Steam's game log doesn't say which one played each game, "+
+		"so import-steam can't tell your sessions from anyone else's; nothing was imported. "+
+		"Games from here on are still recorded (only settings.steam_account's, when it's set)", len(accounts))
 }
 
 // watchesHyprland reports whether the daemon would watch Hyprland here.

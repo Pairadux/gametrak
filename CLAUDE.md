@@ -120,9 +120,33 @@ relies on:
 - The Deck's user services run while the deck user is logged in, which is
   always (linger is off, and doesn't need to be on). A mode switch may restart
   gametrak; startup recovery covers it
-- Deck config: `source: steam`, `min_session_mins: 5`, `notifications: false`
-  (Game Mode has no notification daemon; notify-send also runs off the event
-  loop with a timeout), `logbook.platform: Steam Deck`
+- **Two people use the Deck**, each with their own Steam account; only the
+  owner's games may be recorded. With `settings.steam_account` set (account
+  ID, `[U:1:…]` or SteamID64; `steam.ParseAccount`), a game counts only when
+  the login name in its reaper's environment (`SteamAppUser`, else
+  `SteamUser`) is that account's `AccountName` in `config/loginusers.vdf`
+  (matched ignoring case). Anything unclear (no variable, process gone, file
+  unreadable, an unknown login) skips the game with a warning: fail closed.
+  A skipped game is still followed (`runningGame.skipped`), silently, so its
+  later lines and its end are recognized. The daemon's log never prints login
+  names, only IDs and profile names (`Account.String`). **The environment
+  variables are not yet confirmed on the Deck** (online and offline); remove
+  this note once they are
+- Why not the other signals: `logs/connection_log.txt` puts the signed-in
+  account on every line, but it logs connections to Steam's servers, so an
+  account switch while offline may write nothing; `loginusers.vdf` has no
+  `MostRecent` on the Deck and its timestamps lag a switch by ~20s;
+  `registry.vdf` has no `ActiveProcess`, and `AutoLoginUser` is the next
+  automatic sign-in, not who is playing; `userdata/<id>` folders don't change
+  when a game starts
+- At startup the daemon warns when several accounts have signed in and
+  `steam_account` isn't set, or when it's set to one that never has.
+  `import-steam` refuses to run where more than one account has signed in,
+  since the game log doesn't say whose session was whose
+- Deck config: `source: steam`, `steam_account: <the owner's>`,
+  `min_session_mins: 5`, `notifications: false` (Game Mode has no
+  notification daemon; notify-send also runs off the event loop with a
+  timeout), `logbook.platform: Steam Deck`
 - `import-steam` rebuilds history from the log with the same rules
   (`steam.History`), skipping sessions with no clear end, and names
   uninstalled games after their last non-tool `steamapps/common/<folder>`.
@@ -132,7 +156,9 @@ relies on:
   means a session of the same app ID or name overlaps it. It refuses to run
   where gametrak watches Hyprland, whose log already has those sessions
 - Testing without a Deck: a fake Steam folder (manifests, libraryfolders.vdf,
-  a log with `\r\n` lines), and real stand-in reapers:
+  loginusers.vdf, a log with `\r\n` lines), and real stand-in reapers (run
+  them under `env -i PATH=/usr/bin:/bin SteamAppUser=<login> …` to launch them
+  as an account):
   `setsid sh -c 'sleep 600; :' reaper SteamLaunch AppId=1127500 -- game`
   (the `; :` keeps sh from exec'ing sleep, which would lose the arguments)
 
