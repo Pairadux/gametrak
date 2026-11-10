@@ -95,6 +95,7 @@ type testSource struct {
 	at     time.Time // when the last event from next says its game started
 	mu     sync.Mutex
 	logged []string
+	debug  []string
 }
 
 func openTestSource(t *testing.T, root, procDir string) *testSource {
@@ -104,7 +105,11 @@ func openTestSource(t *testing.T, root, procDir string) *testSource {
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 		ts.logged = append(ts.logged, fmt.Sprintf(format, args...))
-	}, nil)
+	}, func(format string, args ...any) {
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		ts.debug = append(ts.debug, fmt.Sprintf(format, args...))
+	})
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)
 	}
@@ -251,15 +256,22 @@ func TestAGameStillEndsWhenSteamNeverLogsIt(t *testing.T) {
 		t.Fatalf("event = %+v, want Mini Motorways closed", got)
 	}
 	ts.mu.Lock()
-	logged := strings.Join(ts.logged, "\n")
+	logged, debug := strings.Join(ts.logged, "\n"), strings.Join(ts.debug, "\n")
 	ts.mu.Unlock()
-	if !strings.Contains(logged, "exited without Steam logging it") {
-		t.Errorf("logged %q, want a note that Steam never logged the exit", logged)
+	if logged != "" || !strings.Contains(debug, "Mini Motorways's processes have exited") {
+		t.Errorf("logged %q and, for debugging, %q; want only a debugging note that its processes exited", logged, debug)
 	}
 
-	// A late line from Steam about the same run changes nothing.
-	ts.write(t, motorwaysRemoved)
+	// Steam's own line about the same run, late or (as it usually is) a
+	// moment behind the processes, changes nothing.
+	ts.write(t, motorwaysStopped, motorwaysRemoved)
 	ts.quiet(t)
+	ts.mu.Lock()
+	logged = strings.Join(ts.logged, "\n")
+	ts.mu.Unlock()
+	if logged != "" {
+		t.Errorf("logged %q, want nothing: the game ended the usual way", logged)
+	}
 }
 
 func TestASteamRestartEndsGamesWhoseProcessesAreGone(t *testing.T) {

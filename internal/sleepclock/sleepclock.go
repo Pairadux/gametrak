@@ -29,11 +29,16 @@ func Slept(c Clock, boot string, asleepAt, counted time.Duration) time.Duration 
 	if boot != c.Boot() {
 		return counted
 	}
-	if d := c.Asleep() - asleepAt; d > counted {
+	if d := c.Asleep() - asleepAt; d >= Shortest && d > counted {
 		return d
 	}
 	return counted
 }
+
+// Shortest is the least a reading has to grow to count as sleep. The two
+// clocks can't be read at the same instant, so readings taken while awake
+// differ by a few microseconds; a suspend lasts seconds.
+const Shortest = time.Second
 
 // System is the machine's real clock.
 type System struct{}

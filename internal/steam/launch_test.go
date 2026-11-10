@@ -435,12 +435,14 @@ func TestARealLaunchIsDecidedAndFollowedByItsReaper(t *testing.T) {
 	kill(wrapper)
 	ts.quiet(t)
 
-	// The reaper going away does, when Steam never logs it.
+	// The reaper going away does, whether or not Steam logs it.
 	kill(reaper)
 	if got := ts.next(t); got.Kind != source.Closed || got.Window.ID != "steam:1127500" {
 		t.Fatalf("event = %+v, want Mini Motorways closed", got)
 	}
-	if log := ts.log(); log != "Mini Motorways exited without Steam logging it; ending its session" {
-		t.Errorf("logged %q", log)
+	ts.write(t, removed(1127500))
+	ts.quiet(t)
+	if log := ts.log(); log != "" {
+		t.Errorf("logged %q, want nothing", log)
 	}
 }
