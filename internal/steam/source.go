@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -24,8 +25,10 @@ import (
 //   - games already running when gametrak starts are found from the process
 //     list, where Steam's reaper carries "SteamLaunch AppId=<id>";
 //   - each running game's processes are also watched (pidfd), so a game still
-//     ends when it exits even if Steam crashes and never logs it.
+//     ends when it exits even if Steam crashes and never logs it;
+//   - with OnlyAccount, only games launched by that Steam account count.
 type Source struct {
+	root    string
 	logPath string
 	library *Library
 	follow  *follower
@@ -34,6 +37,7 @@ type Source struct {
 	loc     *time.Location
 	logf    func(format string, args ...any)
 	debugf  func(format string, args ...any)
+	account uint32 // 0 counts every account's games
 
 	running     map[uint64]*runningGame
 	gen         int
@@ -47,6 +51,9 @@ type runningGame struct {
 	name  string
 	gen   int        // tells this run of the game from an earlier one
 	watch *exitWatch // nil when the processes can't be watched
+	// skipped is set for a game that doesn't count (another account's). It's
+	// followed all the same, so its later lines and its end are recognized.
+	skipped bool
 }
 
 // exitNotice says every watched process of a run of a game has exited.
@@ -60,6 +67,7 @@ type exitNotice struct {
 func Open(root string, logf, debugf func(format string, args ...any)) (*Source, error) {
 	logPath := GameLogPath(root)
 	s := &Source{
+		root:    root,
 		logPath: logPath,
 		library: NewLibrary(root),
 		// Taking the log's end before watching it means a line written in
@@ -92,6 +100,12 @@ func Open(root string, logf, debugf func(format string, args ...any)) (*Source, 
 // Name describes the source in the daemon's log.
 func (s *Source) Name() string { return "Steam" }
 
+// OnlyAccount limits the games that count to those launched by the Steam
+// account with this ID. Call it before Snapshot.
+func (s *Source) OnlyAccount(id uint32) {
+	s.account = id
+}
+
 // Installed reports how many installed Steam games the source can see.
 func (s *Source) Installed() int { return s.library.Count() }
 
@@ -104,10 +118,13 @@ func (s *Source) Snapshot() ([]source.Window, error) {
 		if !ok {
 			continue
 		}
-		if _, running := s.running[appID]; !running {
-			s.start(appID, name, pids, 0)
+		game, running := s.running[appID]
+		if !running {
+			game = s.start(appID, name, pids, 0, !s.counts(name, pids))
 		}
-		windows = append(windows, window(appID, name))
+		if !game.skipped {
+			windows = append(windows, window(appID, name))
+		}
 	}
 	return windows, nil
 }
@@ -172,8 +189,11 @@ func (s *Source) Run(ctx context.Context, events chan<- source.Event) error {
 			if !ok || game.gen != notice.gen {
 				continue // already ended, or an earlier run of the game
 			}
-			s.logf("%s exited without Steam logging it; ending its session", game.name)
 			s.stop(notice.appID)
+			if game.skipped {
+				continue
+			}
+			s.logf("%s exited without Steam logging it; ending its session", game.name)
 			if !emit(closed(notice.appID)) {
 				return nil
 			}
@@ -197,14 +217,20 @@ func (s *Source) handle(line logLine, emit func(source.Event) bool) bool {
 		if !slices.Contains(pids, line.pid) {
 			pids = append(pids, line.pid)
 		}
-		s.start(line.appID, name, pids, line.pid)
+		if game := s.start(line.appID, name, pids, line.pid, !s.counts(name, pids)); game.skipped {
+			return true
+		}
 		return emit(source.Event{Kind: source.Opened, Window: window(line.appID, name)})
 
 	case lineRemoved:
-		if _, running := s.running[line.appID]; !running {
+		game, running := s.running[line.appID]
+		if !running {
 			return true
 		}
 		s.stop(line.appID)
+		if game.skipped {
+			return true
+		}
 		return emit(closed(line.appID))
 
 	case lineRestart:
@@ -214,8 +240,11 @@ func (s *Source) handle(line logLine, emit func(source.Event) bool) bool {
 		live := gameProcesses(s.procDir)
 		for appID, game := range s.running {
 			if game.watch == nil && len(live[appID]) == 0 {
-				s.logf("%s ended while Steam restarted; ending its session", game.name)
 				s.stop(appID)
+				if game.skipped {
+					continue
+				}
+				s.logf("%s ended while Steam restarted; ending its session", game.name)
 				if !emit(closed(appID)) {
 					return false
 				}
@@ -225,11 +254,48 @@ func (s *Source) handle(line logLine, emit func(source.Event) bool) bool {
 	return true
 }
 
+// counts reports whether a game that just started is one to record: with
+// OnlyAccount, one that account launched. When the account can't be told, the
+// game doesn't count, so another account's play is never recorded as yours.
+func (s *Source) counts(name string, pids []int) bool {
+	if s.account == 0 {
+		return true
+	}
+	login := ""
+	for _, pid := range pids {
+		if user, ok := launchUser(s.procDir, pid); ok {
+			login = user
+			break
+		}
+	}
+	if login == "" {
+		s.logf("Warning: not recording %s: can't tell which Steam account is playing it (Steam's account variables aren't in its processes' environment)", name)
+		return false
+	}
+	accounts, err := Accounts(s.root)
+	if err != nil {
+		s.logf("Warning: not recording %s: %v", name, err)
+		return false
+	}
+	for _, a := range accounts {
+		if strings.EqualFold(a.Login, login) {
+			if a.ID == s.account {
+				return true
+			}
+			s.logf("Not recording %s: it's being played on another Steam account, %s", name, a)
+			return false
+		}
+	}
+	s.logf("Warning: not recording %s: the Steam account playing it isn't in Steam's list of accounts", name)
+	return false
+}
+
 // start records a game as running and watches its processes. logged is the
-// PID from the log line that started it, or 0.
-func (s *Source) start(appID uint64, name string, pids []int, logged int) {
+// PID from the log line that started it, or 0. A skipped game is followed the
+// same way, but never reported.
+func (s *Source) start(appID uint64, name string, pids []int, logged int, skipped bool) *runningGame {
 	s.gen++
-	game := &runningGame{name: name, gen: s.gen}
+	game := &runningGame{name: name, gen: s.gen, skipped: skipped}
 	notice := exitNotice{appID: appID, gen: s.gen}
 	still := func(pid int) bool {
 		// The PID from the log was just written; any other must still be a
@@ -249,6 +315,7 @@ func (s *Source) start(appID uint64, name string, pids []int, logged int) {
 	}
 	game.watch = watch
 	s.running[appID] = game
+	return game
 }
 
 func (s *Source) stop(appID uint64) {

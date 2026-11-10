@@ -115,7 +115,11 @@ func runMonitor() error {
 	}
 
 	if s, ok := src.(*steam.Source); ok {
-		logf("Watching for: every installed Steam game (%d found)", s.Installed())
+		played := ""
+		if account, err := steam.ParseAccount(cfg.Settings.SteamAccount); err == nil {
+			played = fmt.Sprintf(", played on Steam account %d", account)
+		}
+		logf("Watching for: every installed Steam game (%d found)%s", s.Installed(), played)
 	} else {
 		var names []string
 		for _, g := range cfg.Games {
@@ -228,10 +232,50 @@ func openSource() (source.Source, error) {
 			}
 			return nil, err
 		}
+		account, err := steam.ParseAccount(cfg.Settings.SteamAccount)
+		if err != nil && strings.TrimSpace(cfg.Settings.SteamAccount) != "" {
+			return nil, fmt.Errorf("settings.%w", err)
+		}
 		logf("Following Steam's game log: %s", steam.GameLogPath(root))
-		return steam.Open(root, logf, debugf())
+		src, err := steam.Open(root, logf, debugf())
+		if err != nil {
+			return nil, err
+		}
+		src.OnlyAccount(account)
+		checkAccounts(root, account)
+		return src, nil
 	}
 	return nil, fmt.Errorf("unknown settings.source %q (want auto, hyprland or steam)", cfg.Settings.Source)
+}
+
+// checkAccounts warns at startup when games from other people's Steam
+// accounts would be recorded, or when steam_account has never signed in here
+// (a typo, say), so nothing would be.
+func checkAccounts(root string, account uint32) {
+	accounts, err := steam.Accounts(root)
+	if err != nil {
+		if account != 0 {
+			logf("Warning: %v; no games will be recorded until it can be read", err)
+		}
+		return
+	}
+	names := []string{}
+	signedIn := false
+	for _, a := range accounts {
+		names = append(names, a.String())
+		signedIn = signedIn || a.ID == account
+	}
+	if len(names) == 0 {
+		names = append(names, "none")
+	}
+	switch {
+	case account == 0 && len(accounts) > 1:
+		logf("Warning: %d Steam accounts have signed in here (%s), and games from all of them are recorded; "+
+			"set settings.steam_account to the one to record", len(accounts), strings.Join(names, ", "))
+	case account != 0 && !signedIn:
+		logf("Warning: settings.steam_account is %d, which has never signed in to Steam here (accounts that have: %s); "+
+			"no games will be recorded until it does", account, strings.Join(names, ", "))
+	}
 }
 
 // steamNames gives Steam's own names for Proton games' steam_app_<id>

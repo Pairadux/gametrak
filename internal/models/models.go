@@ -89,6 +89,10 @@ type Settings struct {
 	Source string `mapstructure:"source" yaml:"source,omitempty"`
 	// SteamDir is Steam's data folder, if it isn't in one of the usual places.
 	SteamDir string `mapstructure:"steam_dir" yaml:"steam_dir,omitempty"`
+	// SteamAccount, where gametrak follows Steam, limits the games recorded
+	// to those this Steam account plays (its account ID or 17-digit Steam ID).
+	// Empty records every account's games.
+	SteamAccount string `mapstructure:"steam_account" yaml:"steam_account,omitempty"`
 }
 
 // Logbook configures syncing sessions with a sheet on a Logbook site. The
