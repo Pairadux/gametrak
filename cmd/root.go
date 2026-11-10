@@ -33,6 +33,9 @@ var (
 	debugMode bool
 )
 
+// version is set at build time by the release workflow (-ldflags -X).
+var version = "dev"
+
 var rootCmd = &cobra.Command{
 	Use:   "gametrak",
 	Short: "Event-driven game session tracker for Hyprland",
@@ -43,6 +46,7 @@ a Steam Deck it follows the Steam client's log of the games it runs.
 It tracks session durations, leaving out time the machine spends asleep, and
 outputs events to stdout. Running gametrak without subcommands starts the
 monitoring service.`,
+	Version: version,
 	CompletionOptions: cobra.CompletionOptions{
 		HiddenDefaultCmd: true,
 	},
