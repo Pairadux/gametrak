@@ -21,16 +21,27 @@ type Active struct {
 	Title   string    `json:"title"`
 	Game    string    `json:"game"`
 	Start   time.Time `json:"start"`
+
+	// Sleep accounting, so a restart doesn't lose the time asleep counted so
+	// far: the boot the session started in, the machine's total time asleep
+	// at its start, and the sleep counted as of this write. Durations are in
+	// nanoseconds; empty in states written before sleep was tracked.
+	Boot          string        `json:"boot_id,omitempty"`
+	AsleepAtStart time.Duration `json:"asleep_at_start_ns,omitempty"`
+	Paused        time.Duration `json:"paused_ns,omitempty"`
 }
 
 // Session converts the record back into an in-memory session.
 func (a Active) Session() models.Session {
 	return models.Session{
-		Address:   a.Address,
-		Class:     a.Class,
-		Title:     a.Title,
-		GameName:  a.Game,
-		StartTime: a.Start,
+		Address:       a.Address,
+		Class:         a.Class,
+		Title:         a.Title,
+		GameName:      a.Game,
+		StartTime:     a.Start,
+		Boot:          a.Boot,
+		AsleepAtStart: a.AsleepAtStart,
+		Paused:        a.Paused,
 	}
 }
 
@@ -77,11 +88,14 @@ func Save(path string, sessions []models.Session, now time.Time) error {
 	s := State{PID: os.Getpid(), UpdatedAt: now}
 	for _, sess := range sessions {
 		s.Sessions = append(s.Sessions, Active{
-			Address: sess.Address,
-			Class:   sess.Class,
-			Title:   sess.Title,
-			Game:    sess.GameName,
-			Start:   sess.StartTime,
+			Address:       sess.Address,
+			Class:         sess.Class,
+			Title:         sess.Title,
+			Game:          sess.GameName,
+			Start:         sess.StartTime,
+			Boot:          sess.Boot,
+			AsleepAtStart: sess.AsleepAtStart,
+			Paused:        sess.Paused,
 		})
 	}
 	sort.Slice(s.Sessions, func(i, j int) bool { return s.Sessions[i].Start.Before(s.Sessions[j].Start) })

@@ -27,6 +27,9 @@ func Load(cfg *models.Config) error {
 	if cfg.Settings.StateFile == "" {
 		cfg.Settings.StateFile = DefaultStateFile
 	}
+	if cfg.Settings.Source == "" {
+		cfg.Settings.Source = DefaultSource
+	}
 
 	if cfg.Logbook.URL == "" {
 		cfg.Logbook.URL = DefaultLogbookURL
@@ -36,6 +39,9 @@ func Load(cfg *models.Config) error {
 	}
 	if cfg.Logbook.CredentialsFile == "" {
 		cfg.Logbook.CredentialsFile = DefaultLogbookCredentials
+	}
+	if cfg.Logbook.Platform == "" {
+		cfg.Logbook.Platform = DefaultLogbookPlatform
 	}
 
 	return nil

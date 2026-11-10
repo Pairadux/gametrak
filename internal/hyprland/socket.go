@@ -1,7 +1,6 @@
 package hyprland
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -46,18 +45,4 @@ func Connect() (net.Conn, error) {
 	}
 
 	return conn, nil
-}
-
-// Listen reads events from the connection and sends them to the provided channel.
-// It blocks until the connection is closed or an error occurs.
-func Listen(conn net.Conn, events chan<- string, errors chan<- error) {
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		events <- scanner.Text()
-	}
-
-	if err := scanner.Err(); err != nil {
-		errors <- err
-	}
-	close(events)
 }

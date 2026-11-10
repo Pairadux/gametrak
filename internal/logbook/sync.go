@@ -16,9 +16,6 @@ import (
 	"github.com/austincgause/gametrak/internal/session"
 )
 
-// Platform is what every session gametrak records was played on.
-const Platform = "PC"
-
 // minLinkedToGuard is how many linked sessions the log needs before a pull
 // that would delete all of them is refused.
 const minLinkedToGuard = 3
@@ -30,6 +27,9 @@ const minLinkedToGuard = 3
 type Syncer struct {
 	Client       *Client
 	SessionsFile string
+	// Platform is what uploaded rows say the sessions were played on, such
+	// as "PC" or "Steam Deck".
+	Platform string
 	// StateFile records the sheet version last pulled and which site and
 	// sheet the log's row ids belong to; LockFile serializes syncs.
 	StateFile string
@@ -170,7 +170,7 @@ func (s *Syncer) push(ctx context.Context, skip map[string]string, rejected *int
 	// uploaded, and every copy gets a row of its own when they are linked.
 	created := make(map[sessionKey][]Row)
 	for i, sess := range pending {
-		row, createErr := s.Client.Create(ctx, newRow(sess))
+		row, createErr := s.Client.Create(ctx, newRow(sess, s.platform()))
 		var apiErr *APIError
 		if errors.As(createErr, &apiErr) && apiErr.Status == http.StatusBadRequest {
 			*rejected++
@@ -212,12 +212,20 @@ func (s *Syncer) push(ctx context.Context, skip map[string]string, rejected *int
 	return uploaded, err
 }
 
-func newRow(sess models.SessionLog) NewRow {
+// platform is the platform uploads name, PC unless the config says otherwise.
+func (s *Syncer) platform() string {
+	if s.Platform == "" {
+		return "PC"
+	}
+	return s.Platform
+}
+
+func newRow(sess models.SessionLog, platform string) NewRow {
 	return NewRow{
 		OccurredAt: sess.Start,
 		Game:       sess.Game,
 		Minutes:    Minutes(sess.DurationSeconds),
-		Platform:   Platform,
+		Platform:   platform,
 	}
 }
 

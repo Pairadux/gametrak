@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/austincgause/gametrak/internal/output"
+	"github.com/austincgause/gametrak/internal/sleepclock"
 	"github.com/austincgause/gametrak/internal/state"
 	"github.com/austincgause/gametrak/internal/utility"
 	"github.com/spf13/cobra"
@@ -37,7 +38,7 @@ The --json output is stable and intended for status bars and scripts.`,
 		// Time already banked today plus whatever is still running.
 		live := today
 		for _, active := range current.Sessions {
-			live += now.Sub(active.Start)
+			live += played(active, now)
 		}
 
 		if statusJSON {
@@ -57,7 +58,7 @@ The --json output is stable and intended for status bars and scripts.`,
 			table := output.NewTable(output.Left, output.Right, output.Left, output.Right, output.Left, output.Left).
 				Gaps("  ", " ", "  ", " ", "  ")
 			for _, active := range current.Sessions {
-				cells := append([]string{active.Game}, utility.DurationCells(now.Sub(active.Start))...)
+				cells := append([]string{active.Game}, utility.DurationCells(played(active, now))...)
 				table.Row(append(cells, "since "+active.Start.Format("15:04"))...)
 			}
 			table.Print(os.Stdout)
@@ -70,6 +71,14 @@ The --json output is stable and intended for status bars and scripts.`,
 		fmt.Println()
 		return nil
 	},
+}
+
+// played is how long an active session has been played so far, not counting
+// time the machine spent asleep.
+func played(active state.Active, now time.Time) time.Duration {
+	s := active.Session()
+	s.Paused = sleepclock.Slept(sleepclock.System{}, active.Boot, active.AsleepAtStart, active.Paused)
+	return s.Played(now)
 }
 
 // playedToday totals the sessions already written to the log today.
@@ -117,7 +126,7 @@ func printStatusJSON(current state.State, today, live time.Duration, now time.Ti
 			Game:           active.Game,
 			Class:          active.Class,
 			Start:          active.Start,
-			ElapsedSeconds: int64(now.Sub(active.Start).Seconds()),
+			ElapsedSeconds: int64(played(active, now).Seconds()),
 		})
 	}
 

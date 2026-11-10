@@ -407,3 +407,19 @@ func TestRunSyncsOnTriggersUntilCancelled(t *testing.T) {
 		t.Errorf("no sync state written: %v", err)
 	}
 }
+
+func TestUploadsNameTheConfiguredPlatform(t *testing.T) {
+	fake, server := newFakeLogbook(t)
+	syncer := newTestSyncer(t, server, recorded("Mini Motorways", "2026-11-10T06:25:31-05:00", 1800))
+	syncer.Platform = "Steam Deck"
+
+	if result := syncOnce(t, syncer, false); result.Uploaded != 1 {
+		t.Fatalf("result = %+v, want one upload", result)
+	}
+	if got := fake.rows[0].Data.Platform; got != "Steam Deck" {
+		t.Errorf("uploaded platform = %q, want Steam Deck", got)
+	}
+	if got := localSessions(t, syncer)[0].Platform; got != "Steam Deck" {
+		t.Errorf("local platform = %q, want Steam Deck", got)
+	}
+}
