@@ -260,9 +260,11 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
 - Uploads use `logbook.platform` (default `PC`; the Deck sets `Steam Deck`).
   Sessions the other device uploaded arrive as site sessions with no class
 - `go.mod` asks for Go 1.25.6. Where that toolchain can't be downloaded, check
-  with an older local Go via a scratch copy of go.mod:
-  `GOTOOLCHAIN=local go test -modfile=/tmp/go124.mod ./...` (with `go 1.24`
-  in that copy and go.sum copied next to it as `go124.sum`)
+  with an older local Go 1.25 via a scratch copy of go.mod:
+  `GOTOOLCHAIN=local go test -modfile=/tmp/go125.mod ./...` (with `go 1.25.0`
+  in that copy and go.sum copied next to it as `go125.sum`). Go 1.24 can't:
+  x/sys and x/text need 1.25. They're held at the last releases that don't
+  need 1.26 (v0.47.0, v0.41.0), so a plain `go get -u` would raise the go line
 
 ## Pending work
 
