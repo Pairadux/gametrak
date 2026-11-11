@@ -29,6 +29,9 @@ type fakeLogbook struct {
 	// failNextCreate stores the next created row but answers 500, like a
 	// response lost after the write.
 	failNextCreate bool
+	// failVersion holds statuses to answer the next version requests with, in
+	// order, like a site that is down or a token that is refused.
+	failVersion []int
 }
 
 func newFakeLogbook(t *testing.T) (*fakeLogbook, *httptest.Server) {
@@ -47,6 +50,11 @@ func (f *fakeLogbook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests[route]++
 	switch route {
 	case "GET version":
+		if len(f.failVersion) > 0 {
+			w.WriteHeader(f.failVersion[0])
+			f.failVersion = f.failVersion[1:]
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"version": f.version})
 	case "GET rows":
 		// Pages of two, to exercise the cursor.
@@ -406,6 +414,98 @@ func TestRunSyncsOnTriggersUntilCancelled(t *testing.T) {
 	if _, err := os.Stat(syncer.StateFile); err != nil {
 		t.Errorf("no sync state written: %v", err)
 	}
+}
+
+type outcome struct {
+	result Result
+	err    error
+}
+
+// runTriggeredOnce starts Run, triggers one sync, and returns the outcomes of
+// that sync and of any retries. Run is stopped when the test ends.
+func runTriggeredOnce(t *testing.T, syncer *Syncer) <-chan outcome {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	trigger := make(chan struct{}, 1)
+	outcomes := make(chan outcome, 10)
+	stopped := make(chan struct{})
+	go func() {
+		syncer.Run(ctx, trigger, func(r Result, err error) { outcomes <- outcome{r, err} })
+		close(stopped)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
+	trigger <- struct{}{}
+	return outcomes
+}
+
+func nextOutcome(t *testing.T, outcomes <-chan outcome) outcome {
+	t.Helper()
+	select {
+	case o := <-outcomes:
+		return o
+	case <-time.After(2 * time.Second):
+		t.Fatal("no sync happened")
+		return outcome{}
+	}
+}
+
+func expectNoMoreSyncs(t *testing.T, outcomes <-chan outcome) {
+	t.Helper()
+	select {
+	case o := <-outcomes:
+		t.Errorf("unexpected sync: %+v", o)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRunRetriesASyncThatFailedForATemporaryReason(t *testing.T) {
+	fake, server := newFakeLogbook(t)
+	fake.failVersion = []int{http.StatusServiceUnavailable, http.StatusServiceUnavailable}
+	syncer := newTestSyncer(t, server, recorded("Deadlock", "2026-10-15T20:00:00-04:00", 3600))
+	syncer.Retry = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+
+	outcomes := runTriggeredOnce(t, syncer)
+	for i := range 2 {
+		if o := nextOutcome(t, outcomes); o.err == nil {
+			t.Fatalf("sync %d succeeded, want the site's 503", i+1)
+		}
+	}
+	if o := nextOutcome(t, outcomes); o.err != nil || o.result.Uploaded != 1 {
+		t.Errorf("retry = %+v, want it to upload the session", o)
+	}
+	expectNoMoreSyncs(t, outcomes)
+}
+
+func TestRunStopsRetryingWhenTheWaitsRunOut(t *testing.T) {
+	fake, server := newFakeLogbook(t)
+	unavailable := http.StatusServiceUnavailable
+	fake.failVersion = []int{unavailable, unavailable, unavailable, unavailable}
+	syncer := newTestSyncer(t, server)
+	syncer.Retry = []time.Duration{time.Millisecond, time.Millisecond}
+
+	outcomes := runTriggeredOnce(t, syncer)
+	for range 3 {
+		if o := nextOutcome(t, outcomes); o.err == nil {
+			t.Fatal("sync succeeded, want the site's 503")
+		}
+	}
+	expectNoMoreSyncs(t, outcomes)
+}
+
+func TestRunDoesNotRetryAFailureThatWontPass(t *testing.T) {
+	fake, server := newFakeLogbook(t)
+	fake.failVersion = []int{http.StatusUnauthorized}
+	syncer := newTestSyncer(t, server)
+	syncer.Retry = []time.Duration{time.Millisecond}
+
+	outcomes := runTriggeredOnce(t, syncer)
+	if o := nextOutcome(t, outcomes); o.err == nil {
+		t.Fatal("sync succeeded, want the rejected token's 401")
+	}
+	expectNoMoreSyncs(t, outcomes)
 }
 
 func TestUploadsNameTheConfiguredPlatform(t *testing.T) {

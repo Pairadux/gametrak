@@ -38,6 +38,11 @@ type Syncer struct {
 	Location *time.Location
 	// Logf, when set, reports progress during long uploads.
 	Logf func(format string, args ...any)
+	// Retry is how long Run waits before each new try after a sync fails for
+	// a reason that may pass, such as the network not being up yet when the
+	// daemon starts at login. Once they're used up, the next sync waits for
+	// the next trigger. Empty means never retry.
+	Retry []time.Duration
 }
 
 // Result describes what one sync did.
@@ -280,20 +285,31 @@ func (s *Syncer) saveState(state syncState) error {
 	return nil
 }
 
-// Run syncs whenever trigger fires until ctx is done, then returns. There is
-// no timer: syncs happen when something calls for one. done receives each
-// sync's outcome.
+// Run syncs whenever trigger fires until ctx is done, then returns. Nothing
+// polls: a sync happens when something calls for one. The only timer is for
+// a sync that failed for a temporary reason, which is tried again after each
+// of the Retry waits in turn until it works or they run out; a new trigger
+// starts them over. done receives each sync's outcome.
 func (s *Syncer) Run(ctx context.Context, trigger <-chan struct{}, done func(Result, error)) {
+	var retry <-chan time.Time
+	retries := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-trigger:
+			retries = 0
+		case <-retry:
 		}
+		retry = nil
 		result, err := s.Sync(ctx, false)
 		if ctx.Err() != nil {
 			return
 		}
 		done(result, err)
+		if err != nil && Temporary(err) && retries < len(s.Retry) {
+			retry = time.After(s.Retry[retries])
+			retries++
+		}
 	}
 }

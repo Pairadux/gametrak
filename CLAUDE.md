@@ -232,6 +232,11 @@ Sessions are mirrored to the `gaming` sheet of the owner's Logbook site
   shortcut while the PC is off) can wait for the next startup or game.
   `gametrak sync` syncs now. Syncs run on their own goroutine so network calls
   never stall the event loop
+- **Retries, not polling.** A daemon sync that fails for a temporary reason
+  (`logbook.Temporary`: no network or DNS, 5xx, 429) is tried again after
+  10s, 30s, 1m, 2m and 5m (`syncRetries`), then waits for the next trigger.
+  The daemon starts at login before the network is up, so without this the
+  startup sync failed on every boot. Nothing runs while syncs work
 - **One cycle** (`Syncer.Sync`, under `logbook.lock` in the state dir so the
   daemon and the command never upload twice): read the sheet's change counter
   (`GET /api/v1/sheets/gaming/version`, one D1 row read); pull the whole sheet

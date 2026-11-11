@@ -26,7 +26,9 @@ sync uploads your whole history. Then the site wins: edits and deletions made
 there replace the local copy, and sessions added there are added here.
 
 While the daemon runs it syncs by itself, with no polling: when it starts,
-and after every logged session. Each sync first checks the sheet's change
+and after every logged session. A sync that fails because the network or the
+site is down is tried again a few times over several minutes, which covers
+the network coming up after login. Each sync first checks the sheet's change
 counter and only downloads the sheet if it moved, so sessions added on the
 site (from a phone shortcut, say) arrive at the next startup or game. Running
 this command syncs now, pulls the whole sheet even if it looks unchanged, and
@@ -85,9 +87,16 @@ func newSyncer(logf func(format string, args ...any)) (*logbook.Syncer, error) {
 	}, nil
 }
 
+// syncRetries are the daemon's waits before trying a sync again after it
+// failed for a reason that may pass. At login the network is often not up
+// yet; these cover several minutes of that without retrying an offline
+// machine forever.
+var syncRetries = []time.Duration{10 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}
+
 // startSync syncs with Logbook in the background when it is enabled: right
-// away, and after every logged session. The returned function stops it,
-// giving a sync in progress a moment to finish.
+// away, and after every logged session, with retries when one fails for a
+// temporary reason. The returned function stops it, giving a sync in progress
+// a moment to finish.
 func startSync(track *tracker.Tracker) (stop func()) {
 	if !cfg.Logbook.Enabled {
 		return func() {}
@@ -100,6 +109,7 @@ func startSync(track *tracker.Tracker) (stop func()) {
 		}
 		return func() {}
 	}
+	syncer.Retry = syncRetries
 
 	trigger := make(chan struct{}, 1)
 	poke := func() {
