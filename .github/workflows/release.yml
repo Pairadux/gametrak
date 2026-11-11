@@ -18,9 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The newest Go rather than go.mod's: that is the oldest Go that can
+      # build gametrak, and an old patch release lacks the standard library's
+      # security fixes, which would ship in every binary.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
 
       - name: Test
         run: |

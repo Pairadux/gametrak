@@ -20,7 +20,9 @@ gametrak --version       # "dev" unless built by the release workflow
 
 Releases: pushing a `v*` tag runs `.github/workflows/release.yml`, which tests,
 builds static `gametrak-linux-amd64` (the Deck) and `gametrak-linux-arm64`, and
-attaches them to a GitHub release. The Deck installs from
+attaches them to a GitHub release. It builds with the newest stable Go, not
+`go.mod`'s go line: that line is the minimum, and binaries built with an old
+patch release carried its standard-library vulnerabilities. The Deck installs from
 `releases/latest/download/gametrak-linux-amd64` (the repo is public).
 
 ## Architecture
